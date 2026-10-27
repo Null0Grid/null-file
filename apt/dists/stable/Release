@@ -1,0 +1,32 @@
+Architectures: amd64 arm64
+Codename: stable
+Components: main
+Date: Tue, 27 Oct 2026 18:22:44 +0000
+Description: Null Grid apps (nullgrid.dev)
+Label: Null Grid
+Origin: Null Grid
+Suite: stable
+MD5Sum:
+ 4869be21312018777567add7b69aa552              191 Release
+ 609ef876d63843b174f161ac91e19d74             1173 main/binary-amd64/Packages
+ 4869c6bfb51e8d759fd1d31074725047              761 main/binary-amd64/Packages.gz
+ 95e5533cfc7e7a088d745055a3bba5fb             1173 main/binary-arm64/Packages
+ 4b4c0a26d9a6409391548e3c0114ae8f              759 main/binary-arm64/Packages.gz
+SHA1:
+ 5c386e9e315940cdbd35d265a98261cd6b1e2166              191 Release
+ f253da1cb8669f6f54149e5cad6cff9fb7a9009f             1173 main/binary-amd64/Packages
+ 0321f14379eca7d236ba8097905b9f8d82251962              761 main/binary-amd64/Packages.gz
+ 32f94318ebe3b6f80fb38d24f7351c3636029016             1173 main/binary-arm64/Packages
+ b490bf59722644f95e60861e8fbe7bb45ad38d42              759 main/binary-arm64/Packages.gz
+SHA256:
+ 05a2bb7fa69f024b4fa8006a5f4abfff1f3f8ff57fe84b7267d1f762f647d260              191 Release
+ 422a5eae7ffcdad5e9c1972b610b3c135e98c6d5d0f3c67f22456bc6873e6ab8             1173 main/binary-amd64/Packages
+ a13ba9d455bff4880d8b485a24f500c1b6a3f2b7d59c7cd702b87adc868cc6c5              761 main/binary-amd64/Packages.gz
+ 740fa7f043c2c59091c1b4db1184775c5e71375930dc654ad8452faff00a5c20             1173 main/binary-arm64/Packages
+ ce42b2863df72bd1c64eb0dc5183f13f4ec172560f837770c8db66908f9e62fc              759 main/binary-arm64/Packages.gz
+SHA512:
+ ca8ced354477fff7ef85adac5cda3837b2221e344caf8d3dd01b809c02076af8158c94bb90f49bc7f0b814e3a6b708aa566e4b2a43704f0f0a6149fa6d02e2af              191 Release
+ 08ee70b7b3aff0aeb853cb90b254ad201c5e4f435e7a0a82bc1485c0527bb3f73b33c4f0a3e943fb54096205ebf1f5684ad142e3000f0f6f6072bfc5f679bcba             1173 main/binary-amd64/Packages
+ 5d5045641eea3f92ec286d02bdc3f7d673bfdab7d0c37e2166ef38dc86060d1d63f33302229e8133729ab54fdaa9f829729a9d7a9eca1656947c01e3ba959433              761 main/binary-amd64/Packages.gz
+ e4313bce0fb22d247e00e2c8bc43e5f4029ca21429318f0b8bd633b9cb69122c82ed67d722d49f58483c00a943f1d769f5a014c1bf6c77309b4acddc700e8f87             1173 main/binary-arm64/Packages
+ 20cc36e9de4b318449c555306dabb39774653eff0e92470185f351f2d88c9f039295220d37f0f435490ab39ead9892fec0110012feefbf83de655044fdea3dce              759 main/binary-arm64/Packages.gz

@@ -1,0 +1,19 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Null File packages</title>
+<style>body{background:#0a0a0f;color:#d9def0;font:15px/1.6 system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 16px}
+h1{font:600 20px ui-monospace,monospace;letter-spacing:.08em}h1 b{color:#00e5ff}code,pre{font-family:ui-monospace,monospace;background:#10121a;border:1px solid #232842;border-radius:4px}
+pre{padding:12px;overflow:auto}code{padding:1px 5px}a{color:#00e5ff}</style>
+<h1>NULL <b>FILE</b> · package repository</h1>
+<p>Latest: <b>1.2.0</b>. Installing a Null File <code>.deb</code> or <code>.rpm</code> from the
+<a href="https://github.com/Null0Grid/null-file/releases">releases</a> adds this repository for you, so updates
+come with your other system updates. To add it by hand:</p>
+<h2>Debian, Ubuntu, Mint, Null OS</h2>
+<pre>sudo curl -fsSLo /usr/share/keyrings/null-grid-archive-keyring.gpg https://null0grid.github.io/null-file/null-grid-archive-keyring.gpg
+sudo curl -fsSLo /etc/apt/sources.list.d/null-file.sources https://null0grid.github.io/null-file/null-file.sources
+sudo apt update &amp;&amp; sudo apt install null-file</pre>
+<h2>Fedora, RHEL-family with WebKitGTK 4.1, openSUSE</h2>
+<pre>sudo curl -fsSLo /etc/pki/rpm-gpg/RPM-GPG-KEY-null-grid https://null0grid.github.io/null-file/null-grid.asc
+sudo rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-null-grid
+sudo curl -fsSLo /etc/yum.repos.d/null-file.repo https://null0grid.github.io/null-file/null-file.repo     # openSUSE: /etc/zypp/repos.d/
+sudo dnf install null-file</pre>
+<p>Signing key: <code>F479E27ABDCF2FFF9E8AB0F47AE17832BAEAD2EC</code></p>
