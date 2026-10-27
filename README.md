@@ -19,6 +19,8 @@ Null File is a keyboard-friendly file manager in the Neon Lab look of **[Null Gr
 - **Graph view** (Ctrl+3): the folder tree as a force-directed map. Folders are circles, files are squares colored by type, sized by how much they hold. Depth slider, pan, zoom, drag, double-click to dive in.
 - **Open a terminal here** (F4), Konsole first, then whatever terminal you have.
 - **Live updates** when files change on disk, and new drives appear in the sidebar on their own.
+- **The Vault** (new in 1.1): a private folder in the sidebar that's encrypted on disk and opens with a PIN. See below.
+- **Automatic updates** (new in 1.1): .deb and .rpm installs update with the rest of your system; the AppImage and tar.gz update themselves.
 
 | Graph | List |
 |---|---|
@@ -30,15 +32,19 @@ Download from [Releases](../../releases), for **x86_64** or **ARM64** (`aarch64`
 
 | Distro | File | How |
 |---|---|---|
-| Ubuntu 22.04+, Debian 12+, Mint, Null OS | `null-file_1.0.0_amd64.deb` | `sudo apt install ./null-file_1.0.0_amd64.deb` |
-| Fedora, openSUSE | `null-file-1.0.0-1.x86_64.rpm` | `sudo dnf install ./null-file-1.0.0-1.x86_64.rpm` (openSUSE: `sudo zypper install ./…`) |
+| Ubuntu 22.04+, Debian 12+, Mint, Null OS | `null-file_1.1.0_amd64.deb` | `sudo apt install ./null-file_1.1.0_amd64.deb` |
+| Fedora, openSUSE | `null-file-1.1.0-1.x86_64.rpm` | `sudo dnf install ./null-file-1.1.0-1.x86_64.rpm` (openSUSE: `sudo zypper install ./…`) |
 | Arch, Manjaro, EndeavourOS | AUR: `null-file-bin` | `yay -S null-file-bin`, or build the attached `PKGBUILD` with `makepkg -si` |
-| Any, without installing | `Null-File-1.0.0-x86_64.AppImage` | `chmod +x Null-File-*.AppImage`, then run it |
-| Any, sandboxed; also RHEL, Rocky, Alma | `null-file-1.0.0-x86_64.flatpak` | `flatpak install ./null-file-1.0.0-x86_64.flatpak` |
-| Any with snapd | `null-file_1.0.0_amd64.snap` | `sudo snap install --dangerous ./null-file_1.0.0_amd64.snap` (home folder and USB drives only) |
-| Anything else | `null-file-1.0.0-linux-x86_64.tar.gz` | unpack, then `./null-file`, or `./install.sh` to add it to your app menu |
+| Any, without installing | `Null-File-1.1.0-x86_64.AppImage` | `chmod +x Null-File-*.AppImage`, then run it |
+| Any, sandboxed; also RHEL, Rocky, Alma | `null-file-1.1.0-x86_64.flatpak` | `flatpak install ./null-file-1.1.0-x86_64.flatpak` |
+| Any with snapd | `null-file_1.1.0_amd64.snap` | `sudo snap install --dangerous ./null-file_1.1.0_amd64.snap` (home folder and USB drives only) |
+| Anything else | `null-file-1.1.0-linux-x86_64.tar.gz` | unpack, then `./null-file`, or `./install.sh` to add it to your app menu |
 
 Check a download with `sha256sum -c SHA256SUMS --ignore-missing`.
+
+### Updates
+
+Installing the `.deb` or `.rpm` also adds the signed Null Grid package repository, so new versions arrive with your normal system updates (`sudo apt upgrade`, `dnf upgrade`, `zypper up`, KDE Discover, GNOME Software). The AppImage and the tar.gz check GitHub once a day and offer **Update now**, which downloads the new version, checks it against `SHA256SUMS` and restarts. Flatpak, Snap and AUR update through their own tools. Details: [docs/UPDATES.md](docs/UPDATES.md).
 
 ### Make it your default file manager
 
@@ -62,6 +68,25 @@ null-file --version
 
 If Null File is already open, these open as new tabs in the existing window.
 
+## The Vault
+
+**Vault** in the sidebar is a folder only you can open. The first time, pick a PIN (3 to 300 digits) and write down the 24-word recovery key it shows you.
+
+- **Unlocked**, it works like any folder: drag files in to encrypt them (moving deletes the unencrypted originals; hold Ctrl or use Copy to keep them), drag them out to decrypt, rename, preview, search, graph.
+- **Opening a file in another app** gives that app a temporary decrypted copy in RAM-only storage (`$XDG_RUNTIME_DIR`). Edits you save there go back into the Vault when you return to Null File or lock it, and the copy is wiped on lock.
+- **Locking:** the green **VAULT OPEN · LOCK** button in the status bar, Ctrl+Shift+L, after a few idle minutes (Settings → Vault), and always when Null File closes.
+- **Deleting inside the Vault is permanent.** Vault files never go to the system Trash, where they'd sit unencrypted.
+- **Wrong PINs:** after three, each try has to wait longer (5 seconds, doubling, up to 15 minutes).
+- **Forgot the PIN?** "Forgot your PIN?" on the lock screen takes the 24 words and sets a new PIN. Without the PIN or the words, nobody can open the Vault, including us.
+
+| Locked | Unlocked |
+|---|---|
+| ![The Vault, locked](docs/screenshots/vault-locked.png) | ![The Vault, unlocked](docs/screenshots/vault-open.png) |
+
+On disk it's `~/.local/share/dev.nullgrid.file/vault/`: random-named encrypted blobs and an encrypted index, so even file names and folder structure are hidden. How it's encrypted: [SECURITY.md](SECURITY.md).
+
+A short PIN is quick to type but weak if someone copies the vault files off your disk: they can try every 4-digit PIN offline. Use 6 or more digits for anything important.
+
 ## Keyboard
 
 | Keys | Does |
@@ -81,6 +106,7 @@ If Null File is already open, these open as new tabs in the existing window.
 | Ctrl+Shift+N / Ctrl+Alt+N | New folder / new empty file |
 | Ctrl+H | Show hidden files |
 | Ctrl+I | Details panel |
+| Ctrl+Shift+L | Lock the Vault |
 | F4 | Terminal here |
 | F5 | Refresh |
 
@@ -99,14 +125,15 @@ Packages: `packaging/linux/build-linux.sh` builds the AppImage, .rpm, .tar.gz an
 
 ### Releases
 
-Actions → **Release** → Run workflow → type the version (it must match `src-tauri/tauri.conf.json`). It builds and tests every Linux package for x86_64 and ARM64 (installed on Ubuntu, Debian, Fedora, openSUSE and Arch) and attaches them to the GitHub release.
+Actions → **Release** → Run workflow → type the version (it must match `src-tauri/tauri.conf.json`). It builds and tests every Linux package for x86_64 and ARM64 (installed on Ubuntu, Debian, Fedora, openSUSE and Arch), attaches them to the GitHub release with the notes from [CHANGELOG.md](CHANGELOG.md), and publishes the signed package repository to GitHub Pages. One-time setup for that: [docs/UPDATES.md](docs/UPDATES.md).
 
 ## Project layout
 
 ```
 src/                 the window: index.html, style.css, app.js, graph.js, icons.js, backend.js
-src-tauri/src/       Rust: fsops.rs (files), search.rs (search + graph), sysint.rs (desktop), lib.rs (commands)
-packaging/           deb, rpm/AppImage/tar.gz, Flatpak, Snap, AUR, icon
+src-tauri/src/       Rust: fsops.rs (files), search.rs (search + graph), vault.rs (the Vault), update.rs (updates),
+                     sysint.rs (desktop), lib.rs (commands)
+packaging/           deb, rpm/AppImage/tar.gz, Flatpak, Snap, AUR, icon, repo (signed APT/DNF repository)
 .github/workflows/   CI, Linux packages, Release
 ```
 

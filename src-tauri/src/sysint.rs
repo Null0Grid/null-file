@@ -72,6 +72,21 @@ pub fn open_default(p: &Path) -> Result<(), String> {
     Err("No program found to open files (install xdg-utils).".into())
 }
 
+/// Open a web page in the default browser. Only Null Grid's own pages are allowed.
+pub fn open_url(url: &str) -> Result<(), String> {
+    let ok = ["https://github.com/Null0Grid/", "https://nullgrid.dev"].iter().any(|p| url.starts_with(p));
+    if !ok || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err("That link isn't allowed.".into());
+    }
+    for cmd in ["xdg-open", "gio"] {
+        let args: Vec<&str> = if cmd == "gio" { vec!["open", url] } else { vec![url] };
+        if which(cmd) && spawn(cmd, &args, None).is_ok() {
+            return Ok(());
+        }
+    }
+    Err("No browser found to open the link.".into())
+}
+
 /// Terminals to try, in order. Konsole first because Null OS ships it.
 fn terminals() -> Vec<(String, Vec<String>)> {
     let mut v: Vec<(String, Vec<String>)> = vec![];
@@ -170,6 +185,31 @@ pub fn make_default() -> Result<DefaultStatus, String> {
         return Err("xdg-mime couldn't set the default file manager.".into());
     }
     Ok(default_status())
+}
+
+/// Content type for serving a file to the web view.
+pub fn mime_for(name: &str) -> &'static str {
+    match crate::fsops::ext_of(name).as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "avif" => "image/avif",
+        "ico" => "image/x-icon",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mkv" => "video/x-matroska",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "ogg" | "opus" => "audio/ogg",
+        "flac" => "audio/flac",
+        "wav" => "audio/wav",
+        "m4a" | "aac" => "audio/mp4",
+        "pdf" => "application/pdf",
+        _ => "application/octet-stream",
+    }
 }
 
 /// Copy text (paths) to the system clipboard with whichever tool exists.

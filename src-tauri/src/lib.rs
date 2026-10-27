@@ -3,6 +3,8 @@
 mod fsops;
 mod search;
 mod sysint;
+mod update;
+mod vault;
 
 use fsops::{abs, Entry, Listing, Place, R};
 use serde::{Deserialize, Serialize};
@@ -31,6 +33,10 @@ struct Settings {
     last_tabs: Vec<String>,
     restore_tabs: bool,
     confirm_trash: bool,
+    /// Lock the vault after this many idle minutes (0 = only when Null File closes).
+    vault_autolock: u32,
+    check_updates: bool,
+    skip_version: String,
 }
 
 impl Default for Settings {
@@ -48,6 +54,9 @@ impl Default for Settings {
             last_tabs: vec![],
             restore_tabs: true,
             confirm_trash: false,
+            vault_autolock: 5,
+            check_updates: true,
+            skip_version: String::new(),
         }
     }
 }
@@ -88,6 +97,19 @@ struct AppState {
     watcher: Mutex<Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>>,
     watched: Mutex<Vec<PathBuf>>,
     settings_lock: Mutex<()>,
+    /// The unlocked vault (None while locked).
+    vault: vault::Shared,
+}
+
+fn vstore() -> vault::Store {
+    vault::Store::at(vault::Store::default_root())
+}
+
+/// Run `f` on the unlocked vault, or explain that it's locked.
+fn with_vault<T>(st: &AppState, f: impl FnOnce(&mut vault::Open) -> R<T>) -> R<T> {
+    let mut g = st.vault.lock().unwrap();
+    let o = g.as_mut().ok_or("LOCKED")?;
+    f(o)
 }
 
 #[derive(Serialize, Clone)]
@@ -110,12 +132,20 @@ struct JobEvent {
 /* ---------------- commands: browsing ---------------- */
 
 #[tauri::command]
-fn list_dir(path: String, hidden: bool) -> R<Listing> {
+fn list_dir(st: State<'_, AppState>, path: String, hidden: bool) -> R<Listing> {
+    if vault::is_vault(&path) {
+        let r = vault::rel(&path)?;
+        return with_vault(&st, |o| o.list(&r, hidden));
+    }
     fsops::list_dir(&path, hidden)
 }
 
 #[tauri::command]
-fn stat(path: String) -> R<Entry> {
+fn stat(st: State<'_, AppState>, path: String) -> R<Entry> {
+    if vault::is_vault(&path) {
+        let r = vault::rel(&path)?;
+        return with_vault(&st, |o| o.entry(&r));
+    }
     let p = abs(&path)?;
     fsops::entry_for(&p).map_err(|e| fsops::err(e, "Can't read", &p))
 }
@@ -139,13 +169,22 @@ fn places() -> Places {
 }
 
 #[tauri::command]
-fn dir_size(path: String) -> R<(u64, u64)> {
+fn dir_size(st: State<'_, AppState>, path: String) -> R<(u64, u64)> {
+    if vault::is_vault(&path) {
+        let r = vault::rel(&path)?;
+        return with_vault(&st, |o| Ok(o.measure(&r)));
+    }
     let p = abs(&path)?;
     Ok(fsops::measure(&p))
 }
 
 #[tauri::command]
 async fn search(st: State<'_, AppState>, root: String, query: String, hidden: bool) -> R<search::SearchResult> {
+    if vault::is_vault(&root) {
+        let r = vault::rel(&root)?;
+        let hits = with_vault(&st, |o| Ok(o.find(&r, &query, hidden, 500)))?;
+        return Ok(search::SearchResult { truncated: hits.len() >= 500, scanned: 0, hits });
+    }
     let p = abs(&root)?;
     let gen = st.search_gen.clone();
     let my = gen.fetch_add(1, Ordering::SeqCst) + 1;
@@ -160,7 +199,11 @@ fn cancel_search(st: State<'_, AppState>) {
 }
 
 #[tauri::command]
-async fn graph(root: String, depth: u32, hidden: bool, max_nodes: usize) -> R<search::Graph> {
+async fn graph(st: State<'_, AppState>, root: String, depth: u32, hidden: bool, max_nodes: usize) -> R<search::Graph> {
+    if vault::is_vault(&root) {
+        let r = vault::rel(&root)?;
+        return with_vault(&st, |o| o.tree(&r, depth.min(12), hidden, max_nodes.clamp(10, 5000)));
+    }
     let p = abs(&root)?;
     tauri::async_runtime::spawn_blocking(move || search::tree(&p, depth.min(12), hidden, max_nodes.clamp(10, 5000)))
         .await
@@ -169,21 +212,31 @@ async fn graph(root: String, depth: u32, hidden: bool, max_nodes: usize) -> R<se
 
 /// First chunk of a text file for the preview pane. Binary files return None.
 #[tauri::command]
-fn read_text(path: String, max: usize) -> R<Option<(String, bool)>> {
+fn read_text(st: State<'_, AppState>, path: String, max: usize) -> R<Option<(String, bool)>> {
     use std::io::Read;
-    let p = abs(&path)?;
-    let mut f = std::fs::File::open(&p).map_err(|e| fsops::err(e, "Can't open", &p))?;
     let max = max.min(512 * 1024);
-    let mut buf = vec![0u8; max + 1];
-    let mut n = 0;
-    while n < buf.len() {
-        let k = f.read(&mut buf[n..]).map_err(|e| fsops::err(e, "Can't read", &p))?;
-        if k == 0 {
-            break;
+    let (mut buf, more) = if vault::is_vault(&path) {
+        let r = vault::rel(&path)?;
+        let all = match with_vault(&st, |o| o.read_all(&r, 8 * 1024 * 1024)) {
+            Err(e) if e == "TOO_BIG" => return Ok(None),
+            x => x?,
+        };
+        (all[..all.len().min(max)].to_vec(), all.len() > max)
+    } else {
+        let p = abs(&path)?;
+        let mut f = std::fs::File::open(&p).map_err(|e| fsops::err(e, "Can't open", &p))?;
+        let mut buf = vec![0u8; max + 1];
+        let mut n = 0;
+        while n < buf.len() {
+            let k = f.read(&mut buf[n..]).map_err(|e| fsops::err(e, "Can't read", &p))?;
+            if k == 0 {
+                break;
+            }
+            n += k;
         }
-        n += k;
-    }
-    let more = n > max;
+        (buf, n > max)
+    };
+    let n = buf.len();
     buf.truncate(n.min(max));
     if buf.iter().take(8192).any(|&b| b == 0) {
         return Ok(None);
@@ -205,17 +258,29 @@ fn read_text(path: String, max: usize) -> R<Option<(String, bool)>> {
 /* ---------------- commands: changing things ---------------- */
 
 #[tauri::command]
-fn mkdir(parent: String, name: String) -> R<String> {
+fn mkdir(st: State<'_, AppState>, parent: String, name: String) -> R<String> {
+    if vault::is_vault(&parent) {
+        let r = vault::rel(&parent)?;
+        return with_vault(&st, |o| o.mkdir(&r, &name));
+    }
     fsops::mkdir(&parent, &name)
 }
 
 #[tauri::command]
-fn mkfile(parent: String, name: String) -> R<String> {
+fn mkfile(st: State<'_, AppState>, parent: String, name: String) -> R<String> {
+    if vault::is_vault(&parent) {
+        let r = vault::rel(&parent)?;
+        return with_vault(&st, |o| o.mkfile(&r, &name));
+    }
     fsops::mkfile(&parent, &name)
 }
 
 #[tauri::command]
-fn rename(path: String, name: String) -> R<String> {
+fn rename(st: State<'_, AppState>, path: String, name: String) -> R<String> {
+    if vault::is_vault(&path) {
+        let r = vault::rel(&path)?;
+        return with_vault(&st, |o| o.rename(&r, &name));
+    }
     fsops::rename(&path, &name)
 }
 
@@ -240,7 +305,13 @@ fn move_exact(from: String, to: String) -> R<()> {
 }
 
 #[tauri::command]
-fn trash(paths: Vec<String>) -> R<Vec<String>> {
+fn trash(st: State<'_, AppState>, paths: Vec<String>) -> R<Vec<String>> {
+    // Vault items never go to the system Trash (that would leave them unencrypted): they're deleted for good.
+    if paths.iter().any(|p| vault::is_vault(p)) {
+        let rels: Vec<String> = paths.iter().map(|p| vault::rel(p)).collect::<R<_>>()?;
+        with_vault(&st, |o| o.delete(&rels))?;
+        return Ok(vec![]);
+    }
     let ps: Vec<PathBuf> = paths.iter().map(|p| abs(p)).collect::<R<_>>()?;
     fsops::trash_paths(&ps)?;
     Ok(paths)
@@ -265,6 +336,9 @@ fn empty_trash() -> R<usize> {
 /// with "job" events. `conflict` is keep-both | replace | skip.
 #[tauri::command]
 fn transfer(app: AppHandle, st: State<'_, AppState>, op: String, paths: Vec<String>, dest: String, conflict: String) -> R<u64> {
+    if vault::is_vault(&dest) || paths.iter().any(|p| vault::is_vault(p)) {
+        return vault_transfer(app, st, op, paths, dest, conflict);
+    }
     let dest = abs(&dest)?;
     if !dest.is_dir() {
         return Err(format!("{} isn't a folder.", dest.display()));
@@ -370,6 +444,76 @@ fn transfer(app: AppHandle, st: State<'_, AppState>, op: String, paths: Vec<Stri
     Ok(id)
 }
 
+fn vault_transfer(app: AppHandle, st: State<'_, AppState>, op: String, paths: Vec<String>, dest: String, conflict: String) -> R<u64> {
+    if st.vault.lock().unwrap().is_none() {
+        return Err("Unlock the vault first.".into());
+    }
+    let id = st.next_job.fetch_add(1, Ordering::SeqCst) + 1;
+    let cancel = Arc::new(AtomicBool::new(false));
+    st.jobs.lock().unwrap().insert(id, Job { cancel: cancel.clone() });
+    let v = st.vault.clone();
+    std::thread::spawn(move || {
+        let (mut total_bytes, mut total_items) = (0, 0);
+        for p in &paths {
+            if let Ok(side) = vault::Side::parse(p) {
+                let (b, n) = vault::measure(&v, &side);
+                total_bytes += b;
+                total_items += n;
+            }
+        }
+        let mut ev = JobEvent {
+            id,
+            op: op.clone(),
+            state: "running",
+            done_bytes: 0,
+            total_bytes,
+            done_items: 0,
+            total_items,
+            current: String::new(),
+            error: None,
+            moved: vec![],
+            created: vec![],
+            trashed: vec![],
+        };
+        let _ = app.emit("job", ev.clone());
+        let mut last = Instant::now();
+        let (created, errors) = {
+            let mut on = |b: u64, item: bool, cur: &str| {
+                ev.done_bytes += b;
+                if item {
+                    ev.done_items += 1;
+                }
+                if ev.current != cur {
+                    ev.current = cur.to_string();
+                }
+                if last.elapsed() > Duration::from_millis(120) {
+                    last = Instant::now();
+                    let _ = app.emit("job", ev.clone());
+                }
+            };
+            let mut cx = vault::JobCtx { cancel: &cancel, on: &mut on };
+            vault::transfer(&v, op == "move", &paths, &dest, &conflict, &mut cx)
+        };
+        ev.state = if cancel.load(Ordering::Relaxed) {
+            "cancelled"
+        } else if errors.is_empty() {
+            "done"
+        } else {
+            "error"
+        };
+        ev.done_bytes = ev.done_bytes.min(ev.total_bytes);
+        ev.error = if errors.is_empty() { None } else { Some(errors.join("\n")) };
+        // Vault transfers can't be undone (the originals of a move are deleted for good).
+        ev.created = created;
+        ev.op = format!("vault-{op}");
+        let _ = app.emit("job", ev);
+        if let Some(s) = app.try_state::<AppState>() {
+            s.jobs.lock().unwrap().remove(&id);
+        }
+    });
+    Ok(id)
+}
+
 #[tauri::command]
 fn cancel_job(st: State<'_, AppState>, id: u64) {
     if let Some(j) = st.jobs.lock().unwrap().get(&id) {
@@ -380,8 +524,18 @@ fn cancel_job(st: State<'_, AppState>, id: u64) {
 /* ---------------- commands: system ---------------- */
 
 #[tauri::command]
-fn open_path(path: String) -> R<()> {
+fn open_path(st: State<'_, AppState>, path: String) -> R<()> {
+    if vault::is_vault(&path) {
+        let r = vault::rel(&path)?;
+        let p = with_vault(&st, |o| o.open_copy(&r))?;
+        return sysint::open_default(&p);
+    }
     sysint::open_default(&abs(&path)?)
+}
+
+#[tauri::command]
+fn open_url(url: String) -> R<()> {
+    sysint::open_url(&url)
 }
 
 #[tauri::command]
@@ -402,6 +556,95 @@ fn make_default() -> R<sysint::DefaultStatus> {
 #[tauri::command]
 fn copy_to_clipboard(text: String) -> R<()> {
     sysint::copy_text(&text)
+}
+
+/* ---------------- commands: vault ---------------- */
+
+#[tauri::command]
+fn vault_status(st: State<'_, AppState>) -> vault::Status {
+    vault::status(&vstore(), st.vault.lock().unwrap().is_some())
+}
+
+#[tauri::command]
+async fn vault_setup(st: State<'_, AppState>, pin: String) -> R<String> {
+    let (o, words) = tauri::async_runtime::spawn_blocking(move || vault::setup(&vstore(), &pin)).await.map_err(|e| e.to_string())??;
+    *st.vault.lock().unwrap() = Some(o);
+    Ok(words)
+}
+
+#[tauri::command]
+async fn vault_unlock(st: State<'_, AppState>, pin: String) -> R<()> {
+    let o = tauri::async_runtime::spawn_blocking(move || vault::unlock(&vstore(), &pin)).await.map_err(|e| e.to_string())??;
+    *st.vault.lock().unwrap() = Some(o);
+    Ok(())
+}
+
+#[tauri::command]
+async fn vault_recover(st: State<'_, AppState>, words: String, pin: String) -> R<()> {
+    let o = tauri::async_runtime::spawn_blocking(move || vault::recover(&vstore(), &words, &pin)).await.map_err(|e| e.to_string())??;
+    *st.vault.lock().unwrap() = Some(o);
+    Ok(())
+}
+
+#[tauri::command]
+async fn vault_change_pin(st: State<'_, AppState>, pin: String) -> R<()> {
+    let v = st.vault.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let g = v.lock().unwrap();
+        g.as_ref().ok_or("LOCKED")?.change_pin(&pin)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Lock: save back edits made in other apps, erase decrypted copies, forget the key.
+#[tauri::command]
+fn vault_lock(st: State<'_, AppState>) -> R<usize> {
+    for j in st.jobs.lock().unwrap().values() {
+        j.cancel.store(true, Ordering::Relaxed);
+    }
+    let o = st.vault.lock().unwrap().take();
+    match o {
+        Some(o) => o.close(),
+        None => Ok(0),
+    }
+}
+
+#[tauri::command]
+fn vault_sync(st: State<'_, AppState>) -> R<usize> {
+    with_vault(&st, |o| o.sync_back())
+}
+
+/// Serves decrypted vault files to the window for thumbnails and previews:
+/// nfvault://localhost/<percent-encoded vault path>
+fn vault_protocol(app: &AppHandle, req: &tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
+    use tauri::http::{Response, StatusCode};
+    let fail = |code: StatusCode| Response::builder().status(code).body(Vec::new()).unwrap();
+    let raw = req.uri().path().trim_start_matches('/');
+    let path = percent_encoding::percent_decode_str(raw).decode_utf8_lossy().into_owned();
+    let Ok(r) = vault::rel(&path) else { return fail(StatusCode::BAD_REQUEST) };
+    let st = app.state::<AppState>();
+    let (key, blobs, blob, size) = {
+        let g = st.vault.lock().unwrap();
+        let Some(o) = g.as_ref() else { return fail(StatusCode::FORBIDDEN) };
+        let Ok(n) = o.node(&r) else { return fail(StatusCode::NOT_FOUND) };
+        if n.dir {
+            return fail(StatusCode::NOT_FOUND);
+        }
+        (o.key.clone(), o.store.blobs(), n.blob.clone(), n.size)
+    };
+    if size > 300 * 1024 * 1024 {
+        return fail(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+    match vault::read_blob(&key, &blobs, &blob) {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", sysint::mime_for(&r))
+            .header("Cache-Control", "no-store")
+            .body(bytes.to_vec())
+            .unwrap(),
+        Err(_) => fail(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 /* ---------------- commands: settings, startup, watching ---------------- */
@@ -533,6 +776,7 @@ pub fn run() {
             cancel_job,
             open_path,
             open_terminal,
+            open_url,
             default_status,
             make_default,
             copy_to_clipboard,
@@ -540,9 +784,28 @@ pub fn run() {
             save_settings,
             take_pending,
             watch,
+            vault_status,
+            vault_setup,
+            vault_unlock,
+            vault_recover,
+            vault_change_pin,
+            vault_lock,
+            vault_sync,
+            update::update_check,
+            update::update_install,
+            update::relaunch,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Null File");
+        .register_uri_scheme_protocol("nfvault", |ctx, req| vault_protocol(ctx.app_handle(), &req))
+        .build(tauri::generate_context!())
+        .expect("error while starting Null File")
+        .run(|app, ev| {
+            if let tauri::RunEvent::Exit = ev {
+                // Never leave the vault open or decrypted copies behind.
+                if let Some(o) = app.state::<AppState>().vault.lock().unwrap().take() {
+                    let _ = o.close();
+                }
+            }
+        });
 }
 
 #[cfg(test)]

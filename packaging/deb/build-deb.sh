@@ -28,6 +28,10 @@ mkdir -p "$R/usr/share/icons/hicolor/scalable/apps"
 cp "$root/packaging/icon/null-file.svg" "$R/usr/share/icons/hicolor/scalable/apps/dev.nullgrid.file.svg"
 install -m644 "$root/packaging/linux/dev.nullgrid.file.desktop" "$R/usr/share/applications/dev.nullgrid.file.desktop"
 install -m644 "$root/packaging/linux/dev.nullgrid.file.metainfo.xml" "$R/usr/share/metainfo/dev.nullgrid.file.metainfo.xml"
+# The Null Grid package repository, so apt / Discover install updates (apt upgrade).
+install -Dm644 "$root/packaging/repo/null-file.sources" "$R/etc/apt/sources.list.d/null-file.sources"
+install -Dm644 "$root/packaging/repo/null-grid-archive-keyring.gpg" "$R/usr/share/keyrings/null-grid-archive-keyring.gpg"
+echo "/etc/apt/sources.list.d/null-file.sources" > "$R/DEBIAN/conffiles"
 
 cat > "$R/usr/share/doc/null-file/copyright" <<'EOT'
 Null File
@@ -45,7 +49,7 @@ EOT
 cp "$R/DEBIAN/postinst" "$R/DEBIAN/postrm"
 chmod 755 "$R/DEBIAN/postinst" "$R/DEBIAN/postrm"
 
-size="$(du -sk "$R/usr" | cut -f1)"
+size="$(du -sk "$R/usr" "$R/etc" | awk '{s+=$1} END {print s}')"
 # the glibc this binary actually needs (it depends on the distro it was built on)
 glibc="$(objdump -T "$R/usr/bin/null-file" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1 | cut -d_ -f2)"
 cat > "$R/DEBIAN/control" <<EOT

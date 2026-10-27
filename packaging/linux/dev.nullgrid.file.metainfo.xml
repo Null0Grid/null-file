@@ -22,6 +22,7 @@
       <li>A Ctrl+K command palette, type-ahead, and search through every subfolder</li>
       <li>A graph view that draws a folder tree as a force-directed map, colored by file type</li>
       <li>Open a terminal in any folder, and set Null File as the default file manager in one click</li>
+      <li>The Vault: a folder encrypted with XChaCha20-Poly1305 that opens with a PIN, with a 24-word recovery key</li>
     </ul>
   </description>
   <launchable type="desktop-id">dev.nullgrid.file.desktop</launchable>
@@ -69,6 +70,11 @@
   </branding>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.1.0" date="2026-10-27">
+      <description>
+        <p>The Vault: a PIN-protected encrypted folder with a recovery key. Automatic updates: a signed APT/DNF repository for .deb and .rpm installs, and in-app updates for the AppImage and tar.gz.</p>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-10-27">
       <description>
         <p>First release: tabs, grid and list views, undo, the command palette, and the graph view.</p>

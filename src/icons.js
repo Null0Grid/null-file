@@ -23,6 +23,9 @@ const P = {
   net: '<rect x="8" y="3" width="8" height="6" rx="1"/><rect x="3" y="15" width="7" height="6" rx="1"/><rect x="14" y="15" width="7" height="6" rx="1"/><path d="M12 9V12M6.5 15V12H17.5V15"/>',
   trash: '<path d="M4.5 7H19.5"/><path d="M9.5 7V4.5H14.5V7"/><path d="M6.5 7L7.5 20H16.5L17.5 7"/><path d="M10 10.5V16.5M14 10.5V16.5"/>',
   pin: '<path d="M9 3.5H15L14 9.5L17.5 12.5V14H6.5V12.5L10 9.5Z"/><path d="M12 14V20.5"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="1.5"/><path d="M8 10.5V7.5Q8 3.5 12 3.5Q16 3.5 16 7.5V10.5"/><path d="M12 14.5V16.5"/>',
+  unlock: '<rect x="5" y="10.5" width="14" height="10" rx="1.5"/><path d="M8 10.5V7.5Q8 3.5 12 3.5Q15.2 3.5 15.8 6.2"/><path d="M12 14.5V16.5"/>',
+  vaultBig: '<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><circle cx="12" cy="12" r="4.2"/><path d="M12 7.8V9.3M12 14.7V16.2M7.8 12H9.3M14.7 12H16.2"/><path d="M5.5 20.5V22M18.5 20.5V22"/>',
   graph: '<circle cx="6" cy="12" r="2.2"/><circle cx="17" cy="6" r="2.2"/><circle cx="17" cy="18" r="2.2"/><path d="M8 11L15 7M8 13L15 17"/>',
 };
 

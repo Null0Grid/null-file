@@ -62,6 +62,8 @@ parts:
     # Graphics drivers come from the gnome-42-2204 runtime snap. A second copy
     # from stage-packages makes EGL load mismatched Mesa parts and crash.
     prime:
+      # the .deb's APT repository entry doesn't apply inside a snap
+      - -etc
       - -usr/lib/*/libEGL*
       - -usr/lib/*/libGL*
       - -usr/lib/*/libGLX*

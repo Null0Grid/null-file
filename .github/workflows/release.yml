@@ -92,25 +92,93 @@ jobs:
           PY
           cp art/flatpak-sources/cargo-sources.json out/cargo-sources.json
           cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Release notes (What's new from CHANGELOG.md, then how to install)
+        run: |
+          v="${{ needs.version.outputs.version }}"
+          {
+            echo "## What's new"
+            awk -v v="$v" '$0 ~ "^## " v "( |$)" {on=1; next} /^## / {on=0} on' CHANGELOG.md
+            cat <<EOF
+
+          **Linux**, for x86_64 and ARM64 (aarch64). Pick your machine's architecture; any distro from 2022 on (glibc 2.35+):
+          - **Ubuntu 22.04+ / Debian 12+ / Mint / Null OS:** \`sudo apt install ./null-file_${v}_amd64.deb\` (ARM: \`_arm64.deb\`). Later versions then arrive with your normal system updates.
+          - **Fedora / openSUSE:** \`sudo dnf install ./null-file-${v}-1.x86_64.rpm\` (openSUSE: \`sudo zypper install ./…rpm\`; ARM: \`.aarch64.rpm\`). Updates come through dnf/zypper too.
+          - **Arch:** the AUR package \`null-file-bin\` (its \`PKGBUILD\` is attached here too)
+          - **Any distro, no install:** the \`.AppImage\`. \`chmod +x\` it and run it; it updates itself.
+          - **Flatpak** (also the way for RHEL, Rocky and Alma): \`flatpak install ./null-file-${v}-x86_64.flatpak\` (needs the Flathub remote)
+          - **Snap:** \`sudo snap install --dangerous ./null-file_${v}_amd64.snap\` (home folder and USB drives only)
+          - **Anything else:** the \`.tar.gz\`. Unpack it and run \`./null-file\`, or \`./install.sh\` to add it to your app menu; it updates itself.
+
+          Make it the file manager that opens folders: \`null-file --set-default\`, or Settings → Default file manager.
+
+          Check a download: \`sha256sum -c SHA256SUMS --ignore-missing\`
+
+          For Flathub, \`dev.nullgrid.file.yml\` and \`cargo-sources.json\` are the submission files.
+          EOF
+          } > notes.md
+          cat notes.md
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
           target_commitish: ${{ needs.version.outputs.ref }}
-          append_body: true
           name: Null File ${{ needs.version.outputs.version }}
           files: out/*
-          body: |
-            **Linux**, for x86_64 and ARM64 (aarch64). Pick your machine's architecture; any distro from 2022 on (glibc 2.35+):
-            - **Ubuntu 22.04+ / Debian 12+ / Mint / Null OS:** `sudo apt install ./null-file_${{ needs.version.outputs.version }}_amd64.deb` (ARM: `_arm64.deb`)
-            - **Fedora / openSUSE:** `sudo dnf install ./null-file-${{ needs.version.outputs.version }}-1.x86_64.rpm` (openSUSE: `sudo zypper install ./…rpm`; ARM: `.aarch64.rpm`)
-            - **Arch:** the AUR package `null-file-bin` (its `PKGBUILD` is attached here too)
-            - **Any distro, no install:** the `.AppImage`. `chmod +x` it and run it.
-            - **Flatpak** (also the way for RHEL, Rocky and Alma): `flatpak install ./null-file-${{ needs.version.outputs.version }}-x86_64.flatpak` (needs the Flathub remote)
-            - **Snap:** `sudo snap install --dangerous ./null-file_${{ needs.version.outputs.version }}_amd64.snap` (home folder and USB drives only)
-            - **Anything else:** the `.tar.gz`. Unpack it and run `./null-file`, or `./install.sh` to add it to your app menu.
+          body_path: notes.md
 
-            Make it the file manager that opens folders: `null-file --set-default`, or Settings → Default file manager.
-
-            Check a download: `sha256sum -c SHA256SUMS --ignore-missing`
-
-            For Flathub, `dev.nullgrid.file.yml` and `cargo-sources.json` are the submission files.
+  repo:
+    name: Publish the APT/DNF repository (GitHub Pages)
+    needs: [version, release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+      - name: Signing key
+        id: key
+        run: |
+          if [ -z "$REPO_SIGNING_KEY" ]; then
+            echo "::warning::No REPO_SIGNING_KEY secret, so the package repository wasn't updated. See docs/UPDATES.md."
+            echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          printf '%s\n' "$REPO_SIGNING_KEY" | gpg --batch --import
+          fpr=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')
+          # the key in the secret must be the one the packages trust
+          gpg --show-keys --with-colons packaging/repo/null-grid.asc | grep -q "^fpr:::::::::$fpr:" \
+            || { echo "::error::REPO_SIGNING_KEY doesn't match packaging/repo/null-grid.asc"; exit 1; }
+          echo "REPO_KEY_ID=$fpr" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        if: steps.key.outputs.skip != '1'
+        with:
+          pattern: linux-*
+          merge-multiple: true
+          path: dist
+      - name: Build the signed repository
+        if: steps.key.outputs.skip != '1'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-utils createrepo-c rpm
+          packaging/repo/publish-repo.sh dist site
+          find site -maxdepth 4 | sort
+      - name: Check it with apt
+        if: steps.key.outputs.skip != '1'
+        run: |
+          cd site && (python3 -m http.server 8080 >/dev/null 2>&1 &) && sleep 1
+          sed 's#https://null0grid.github.io/null-file/apt#http://127.0.0.1:8080/apt#; s#/usr/share/keyrings/null-grid-archive-keyring.gpg#'"$PWD"'/null-grid-archive-keyring.gpg#' null-file.sources > /tmp/test.sources
+          sudo apt-get update -o Dir::Etc::sourcelist=/tmp/test.sources -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
+          apt-cache policy null-file | tee /tmp/policy
+          grep -q "${{ needs.version.outputs.version }}" /tmp/policy
+      - name: Publish to the gh-pages branch
+        if: steps.key.outputs.skip != '1'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: site
+          publish_branch: gh-pages
+          force_orphan: true
+          user_name: "github-actions[bot]"
+          user_email: "github-actions[bot]@users.noreply.github.com"
+          commit_message: "Package repository for ${{ needs.version.outputs.version }}"

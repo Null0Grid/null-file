@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Null File",
   "mainBinaryName": "null-file",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "identifier": "dev.nullgrid.file",
   "build": {
     "frontendDist": "../src"
@@ -24,7 +24,11 @@
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["**", "/**/.*", "/**/.*/**"],
+          "allow": [
+            "**",
+            "/**/.*",
+            "/**/.*/**"
+          ],
           "requireLiteralLeadingDot": false
         }
       },
@@ -33,8 +37,8 @@
         "connect-src": "ipc: http://ipc.localhost",
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' data: blob: asset: http://asset.localhost",
-        "media-src": "'self' asset: http://asset.localhost",
+        "img-src": "'self' data: blob: asset: http://asset.localhost nfvault: http://nfvault.localhost",
+        "media-src": "'self' asset: http://asset.localhost nfvault: http://nfvault.localhost",
         "font-src": "'self'",
         "object-src": "'none'",
         "base-uri": "'none'",
@@ -44,7 +48,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "rpm", "appimage"],
+    "targets": [
+      "deb",
+      "rpm",
+      "appimage"
+    ],
     "publisher": "NULLGRID",
     "copyright": "NULLGRID. All rights reserved.",
     "shortDescription": "Null File - a Neon Lab file manager",
@@ -59,13 +67,22 @@
     "homepage": "https://nullgrid.dev",
     "linux": {
       "deb": {
-        "depends": ["xdg-utils"],
+        "depends": [
+          "xdg-utils"
+        ],
         "desktopTemplate": "../packaging/linux/desktop-template.desktop"
       },
       "rpm": {
         "release": "1",
-        "depends": ["xdg-utils"],
-        "desktopTemplate": "../packaging/linux/desktop-template.desktop"
+        "depends": [
+          "xdg-utils"
+        ],
+        "desktopTemplate": "../packaging/linux/desktop-template.desktop",
+        "files": {
+          "/etc/yum.repos.d/null-file.repo": "../packaging/repo/null-file.repo",
+          "/etc/zypp/repos.d/null-file.repo": "../packaging/repo/null-file.repo",
+          "/etc/pki/rpm-gpg/RPM-GPG-KEY-null-grid": "../packaging/repo/null-grid.asc"
+        }
       },
       "appimage": {
         "bundleMediaFramework": false

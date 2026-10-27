@@ -5,10 +5,19 @@ import { createGraph, KCOL, KNAME } from "./graph.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const baseName = (p) => (p === "/" ? "/" : p.replace(/\/+$/, "").split("/").pop());
-const tabName = (p) => (p === P.home ? "Home" : p === P.trash ? "Trash" : baseName(p) || "/");
-const parentOf = (p) => { if (p === "/") return null; const i = p.replace(/\/+$/, "").lastIndexOf("/"); return i <= 0 ? "/" : p.slice(0, i); };
-const join = (dir, name) => (dir === "/" ? "/" + name : dir + "/" + name);
+// Vault paths look like "vault:/Taxes/2026.pdf"; everything else is a real absolute path.
+const VROOT = "vault:/";
+const isV = (p) => typeof p === "string" && p.startsWith("vault:");
+const vrel = (p) => p.replace(/^vault:\/*/, "").replace(/\/+$/, "");
+const baseName = (p) => (isV(p) ? vrel(p).split("/").pop() || "Vault" : p === "/" ? "/" : p.replace(/\/+$/, "").split("/").pop());
+const tabName = (p) => (p === P.home ? "Home" : p === P.trash ? "Trash" : isV(p) && !vrel(p) ? "Vault" : baseName(p) || "/");
+const parentOf = (p) => {
+  if (isV(p)) { const r = vrel(p); if (!r) return null; const i = r.lastIndexOf("/"); return VROOT + (i < 0 ? "" : r.slice(0, i)); }
+  if (p === "/") return null;
+  const i = p.replace(/\/+$/, "").lastIndexOf("/");
+  return i <= 0 ? "/" : p.slice(0, i);
+};
+const join = (dir, name) => (dir.endsWith("/") ? dir + name : dir + "/" + name);
 const errText = (e) => (typeof e === "string" ? e : e && e.message ? e.message : String(e));
 
 const KIND_LABEL = { dir: "Folder", img: "Image", video: "Video", audio: "Audio", text: "Text", code: "Code", doc: "Document", archive: "Archive", exec: "Program", file: "File" };
@@ -35,11 +44,12 @@ function fmtMode(m, dir) {
   for (let i = 2; i >= 0; i--) { const b = (m >> (i * 3)) & 7; s += (b & 4 ? "r" : "-") + (b & 2 ? "w" : "-") + (b & 1 ? "x" : "-"); }
   return s;
 }
-const homeShort = (p) => (P.home && (p === P.home || p.startsWith(P.home + "/")) ? "~" + p.slice(P.home.length) : p);
+const homeShort = (p) => (isV(p) ? "Vault" + (vrel(p) ? "/" + vrel(p) : "") : P.home && (p === P.home || p.startsWith(P.home + "/")) ? "~" + p.slice(P.home.length) : p);
 
 /* ---------------- state ---------------- */
 
-let S = { pinned: [], recent: [], hidden: false, view: "grid", sort: "name", desc: false, preview: true, sidebar_w: 230, graph: null, last_tabs: [], restore_tabs: true, confirm_trash: false };
+let S = { pinned: [], recent: [], hidden: false, view: "grid", sort: "name", desc: false, preview: true, sidebar_w: 230, graph: null, last_tabs: [], restore_tabs: true, confirm_trash: false, vault_autolock: 5, check_updates: true, skip_version: "" };
+let V = { exists: false, unlocked: false, wait: 0, failures: 0 }; // vault status
 let P = { home: "/", places: [], drives: [], trash: "" };
 const tabs = [];
 let cur = 0;
@@ -60,7 +70,10 @@ let saveTimer;
 function saveSettings() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    S.last_tabs = tabs.map((t) => t.path);
+    // Names inside the vault are secret: never write them to the (plain) settings file.
+    S.last_tabs = tabs.map((t) => (isV(t.path) ? VROOT : t.path));
+    S.recent = S.recent.filter((p) => !isV(p));
+    S.pinned = S.pinned.filter((p) => !isV(p) || p === VROOT);
     api("save_settings", { settings: S }).catch(() => {});
   }, 300);
 }
@@ -86,13 +99,15 @@ async function load(t, keepSel = false) {
     const l = await api("list_dir", { path: t.path, hidden: S.hidden });
     t.listing = l;
     t.error = null;
+    t.locked = false;
     if (keepSel) {
       const have = new Set(l.entries.map((e) => e.path));
       t.sel = new Set([...t.sel].filter((p) => have.has(p)));
     }
   } catch (e) {
     t.listing = null;
-    t.error = errText(e);
+    t.locked = errText(e) === "LOCKED";
+    t.error = t.locked ? null : errText(e);
   }
 }
 
@@ -114,7 +129,7 @@ async function go(path, opts = {}) {
     await load(t);
   }
   if (opts.select) { t.sel = new Set([opts.select]); t.anchor = opts.select; t.focus = opts.select; }
-  if (!t.error) {
+  if (!t.error && !isV(path)) {
     S.recent = [path, ...S.recent.filter((p) => p !== path)].slice(0, 20);
     saveSettings();
   }
@@ -201,7 +216,11 @@ function renderCrumbs() {
   const t = tab();
   const p = t.path;
   const parts = [];
-  if (P.home && (p === P.home || p.startsWith(P.home + "/"))) {
+  if (isV(p)) {
+    parts.push({ label: "Vault", path: VROOT });
+    let acc = VROOT;
+    for (const seg of vrel(p).split("/").filter(Boolean)) { acc = join(acc, seg); parts.push({ label: seg, path: acc }); }
+  } else if (P.home && (p === P.home || p.startsWith(P.home + "/"))) {
     parts.push({ label: "Home", path: P.home });
     let acc = P.home;
     for (const seg of p.slice(P.home.length).split("/").filter(Boolean)) { acc = join(acc, seg); parts.push({ label: seg, path: acc }); }
@@ -226,8 +245,9 @@ $("crumbtrail").addEventListener("click", (e) => {
 });
 function childOnPath(ancestor) {
   const p = tab().path;
-  if (!p.startsWith(ancestor) || p === ancestor) return undefined;
-  const rest = p.slice(ancestor === "/" ? 1 : ancestor.length + 1).split("/")[0];
+  const pre = ancestor.endsWith("/") ? ancestor : ancestor + "/";
+  if (!p.startsWith(pre) || p === ancestor) return undefined;
+  const rest = p.slice(pre.length).split("/")[0];
   return join(ancestor, rest);
 }
 $("crumbs").addEventListener("click", (e) => { if (e.target === $("crumbs")) editPath(); });
@@ -246,8 +266,9 @@ $("pathInput").addEventListener("keydown", async (e) => {
     let v = $("pathInput").value.trim();
     if (v.startsWith("~")) v = P.home + v.slice(1);
     if (v.startsWith("file://")) v = decodeURIComponent(v.slice(7));
-    if (!v.startsWith("/")) v = join(tab().path, v);
-    v = v.replace(/\/+$/, "") || "/";
+    if (/^vault:?$/i.test(v)) v = VROOT;
+    if (!v.startsWith("/") && !isV(v)) v = join(tab().path, v);
+    v = isV(v) ? VROOT + vrel(v) : v.replace(/\/+$/, "") || "/";
     endPathEdit();
     try {
       const st = await api("stat", { path: v });
@@ -266,6 +287,8 @@ function placeRow(p, extra = "") {
 }
 function renderSide() {
   $("places").innerHTML = P.places.map((p) => placeRow(p)).join("");
+  const vOn = tab() && isV(tab().path) ? " on" : "";
+  $("vaultPlace").innerHTML = `<li><button class="place vplace${vOn}${V.unlocked ? " open" : ""}" data-path="${VROOT}" data-drop="${VROOT}" data-vault title="${V.unlocked ? "Vault (unlocked)" : "Vault (locked)"}">${icon(V.unlocked ? "unlock" : "lock", "ic")}<span class="pn">Vault</span><span class="vstate">${V.unlocked ? "OPEN" : V.exists ? "LOCKED" : "SET UP"}</span></button></li>`;
   $("pinned").innerHTML = S.pinned.length
     ? S.pinned.map((p) => placeRow({ path: p, name: baseName(p) || "/", icon: "pin" }, "data-pin")).join("")
     : '<li class="pinempty">Right-click a folder → Pin, or drag one here.</li>';
@@ -283,6 +306,11 @@ $("side").addEventListener("contextmenu", (e) => {
   if (!b) return;
   e.preventDefault();
   const p = b.dataset.path;
+  if (b.hasAttribute("data-vault")) {
+    const items = [{ label: "Open", run: () => go(p) }, { label: "Open in new tab", key: "Middle-click", run: () => addTab(p) }];
+    if (V.unlocked) items.push("-", { label: "Lock vault", key: "Ctrl+Shift+L", run: () => lockVault() }, { label: "Change PIN…", run: changePinModal });
+    return menu(e.clientX, e.clientY, items, "Vault");
+  }
   const items = [
     { label: "Open", run: () => go(p) },
     { label: "Open in new tab", key: "Middle-click", run: () => addTab(p) },
@@ -293,7 +321,9 @@ $("side").addEventListener("contextmenu", (e) => {
   if (b.hasAttribute("data-trash")) items.push("-", { label: "Empty Trash…", danger: true, run: emptyTrash });
   menu(e.clientX, e.clientY, items, homeShort(p));
 });
-function pin(p) { if (!S.pinned.includes(p)) { S.pinned.push(p); saveSettings(); renderSide(); toast(`Pinned ${baseName(p)}`); } }
+function pin(p) {
+  if (isV(p)) return toast("Folders inside the Vault can't be pinned: their names would be saved unencrypted.", { warn: true });
+  if (!S.pinned.includes(p)) { S.pinned.push(p); saveSettings(); renderSide(); toast(`Pinned ${baseName(p)}`); } }
 function unpin(p) { S.pinned = S.pinned.filter((x) => x !== p); saveSettings(); renderSide(); }
 function movePin(p, d) {
   const i = S.pinned.indexOf(p), j = i + d;
@@ -360,6 +390,15 @@ function itemHtml(e, i, t) {
 function renderFiles() {
   const t = tab();
   const files = $("files");
+  const lockedHere = isV(t.path) && (t.locked || !V.unlocked);
+  $("vlock").hidden = !lockedHere;
+  $("center").classList.toggle("locked", lockedHere);
+  if (lockedHere) {
+    files.innerHTML = ""; visible = [];
+    $("emptymsg").hidden = true; $("sortbar").hidden = true;
+    renderLock();
+    return;
+  }
   visible = computeVisible(t);
   const center = $("center");
   center.className = "center " + (S.view === "list" ? "list" : "grid");
@@ -376,6 +415,7 @@ function renderFiles() {
   else if (!visible.length && !(t.search && t.search.running)) {
     em.innerHTML = t.search ? `<b>NO MATCHES</b><span>Nothing named like “${esc(t.search.query)}” under this folder.</span>`
       : t.filter ? `<b>NO MATCHES</b><span>Nothing here matches “${esc(t.filter)}”. Press Enter to search subfolders too.</span>`
+      : isV(t.path) ? `<b>EMPTY VAULT FOLDER</b><span>Drag files here to encrypt them. Moving deletes the unencrypted originals; hold Ctrl to copy instead.</span>`
       : `<b>EMPTY FOLDER</b><span>Drop files here, or right-click for a new folder.</span>`;
     em.hidden = false;
   } else em.hidden = true;
@@ -444,6 +484,7 @@ function openSelection() {
   else dirs.forEach((d) => addTab(d.path, false));
 }
 async function terminalAt(p) {
+  if (isV(p)) return toast("The Vault isn't a folder on disk, so there's no terminal for it.", { warn: true });
   try { const t = await api("open_terminal", { path: p }); toast(`Opened ${t} in ${baseName(p)}`, { ms: 1800 }); } catch (e) { fail(e); }
 }
 
@@ -579,11 +620,15 @@ async function renderInfo() {
   const my = ++infoSeq;
   const t = tab();
   const sel = selectedEntries();
+  if (isV(t.path) && (t.locked || !V.unlocked)) {
+    box.innerHTML = `<div class="big">${icon("lock")}</div><h2>Vault</h2><div class="sub">LOCKED</div><div class="none">Files in the Vault are encrypted on disk. Enter your PIN to see them.</div>`;
+    return;
+  }
   if (sel.length > 1) {
     const total = sel.reduce((a, e) => a + (e.dir ? 0 : e.size), 0), nd = sel.filter((e) => e.dir).length;
     box.innerHTML = `<div class="big">${icon("file")}</div><h2>${sel.length} items selected</h2><div class="sub">${nd ? `${nd} folder${nd === 1 ? "" : "s"} · ` : ""}${sel.length - nd} file${sel.length - nd === 1 ? "" : "s"}</div>
       <dl><dt>Files</dt><dd>${fmtSize(total)}</dd></dl>
-      <div class="acts"><button class="btn sm" data-act="copy">Copy</button><button class="btn sm" data-act="cut">Cut</button><button class="btn sm danger" data-act="trash">Trash</button></div>`;
+      <div class="acts"><button class="btn sm" data-act="copy">Copy</button><button class="btn sm" data-act="cut">Cut</button><button class="btn sm danger" data-act="trash">${isV(t.path) ? "Delete" : "Trash"}</button></div>`;
     return;
   }
   let e = sel[0];
@@ -593,6 +638,7 @@ async function renderInfo() {
     e = { name: baseName(t.path) || "/", path: t.path, dir: true, kind: "dir", items: n, modified: 0, mode: 0, folderSelf: true };
   }
   const isTrash = P.trash && (e.path === P.trash || parentOf(e.path) === P.trash);
+  const inV = isV(e.path);
   const dl = [
     ["Type", e.dir ? "Folder" : `${KIND_LABEL[e.kind] || "File"}${e.ext ? " · ." + esc(e.ext) : ""}`],
     e.dir ? ["Contains", e.items == null ? "—" : `${e.items} item${e.items === 1 ? "" : "s"} <button class="calc" data-act="size">calc size</button><span id="dsize"></span>`] : ["Size", `${fmtSize(e.size)} <span style="color:var(--faint)">(${e.size.toLocaleString()} bytes)</span>`],
@@ -600,10 +646,14 @@ async function renderInfo() {
     e.mode ? ["Access", `<span class="mono">${fmtMode(e.mode, e.dir)}</span>`] : null,
     e.link ? ["Link", "Symbolic link"] : null,
     ["Where", `<span class="mono">${esc(homeShort(e.folderSelf ? e.path : parentOf(e.path)))}</span>`],
+    inV ? ["Stored", '<span class="vok">Encrypted</span> XChaCha20-Poly1305'] : null,
   ].filter(Boolean);
+  if (inV) dl.splice(dl.findIndex((r) => r[0] === "Access"), dl.some((r) => r[0] === "Access") ? 1 : 0);
   const acts = e.folderSelf
-    ? `<button class="btn sm" data-act="term">Terminal</button><button class="btn sm" data-act="graph">Graph</button><button class="btn sm" data-act="path">Copy path</button>`
-    : `<button class="btn sm primary" data-act="open">Open</button>${e.dir ? '<button class="btn sm" data-act="tab">New tab</button>' : ""}<button class="btn sm" data-act="path">Copy path</button><button class="btn sm" data-act="rename">Rename</button>${isTrash ? '<button class="btn sm" data-act="restore">Restore</button>' : '<button class="btn sm danger" data-act="trash">Trash</button>'}`;
+    ? inV
+      ? `<button class="btn sm danger" data-act="vlock">Lock vault</button><button class="btn sm" data-act="graph">Graph</button><button class="btn sm" data-act="vpin">Change PIN</button>`
+      : `<button class="btn sm" data-act="term">Terminal</button><button class="btn sm" data-act="graph">Graph</button><button class="btn sm" data-act="path">Copy path</button>`
+    : `<button class="btn sm primary" data-act="open">Open</button>${e.dir ? '<button class="btn sm" data-act="tab">New tab</button>' : ""}${inV ? "" : '<button class="btn sm" data-act="path">Copy path</button>'}<button class="btn sm" data-act="rename">Rename</button>${isTrash ? '<button class="btn sm" data-act="restore">Restore</button>' : `<button class="btn sm danger" data-act="trash">${inV ? "Delete" : "Trash"}</button>`}`;
   box.innerHTML = `<div class="big" id="bigprev">${e.dir ? icon(e.folderSelf ? "dirOpen" : "dir") : iconFor(e)}</div>
     <h2>${esc(e.name)}</h2><div class="sub">${e.folderSelf ? "THIS FOLDER" : esc(homeShort(e.path))}</div>
     <dl>${dl.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl><div class="acts">${acts}</div>`;
@@ -637,6 +687,8 @@ $("info").addEventListener("click", async (ev) => {
     case "cut": setClip("cut"); break;
     case "term": terminalAt(path); break;
     case "graph": setView("graph"); break;
+    case "vlock": lockVault(); break;
+    case "vpin": changePinModal(); break;
     case "size": {
       a.textContent = "counting…";
       try { const [b, n] = await api("dir_size", { path }); a.remove(); $("dsize").textContent = ` · ${fmtSize(b)} in ${(n - 1).toLocaleString()} items`; } catch (e) { a.textContent = "failed"; }
@@ -658,9 +710,18 @@ function renderStatus() {
   if (t.listing && !t.listing.writable) parts.push('<span class="ro">READ-ONLY</span>');
   if (clip) parts.push(`${clip.paths.length} on clipboard (${clip.op})`);
   if (S.hidden) parts.push("hidden files shown");
+  if (UPD && UPD.newer && UPD.latest !== S.skip_version) parts.push(`<button class="sbtn upd" data-st="update">UPDATE ${esc(UPD.latest)}</button>`);
+  if (V.unlocked) parts.push('<button class="sbtn vopen" data-st="lock" title="Lock the vault (Ctrl+Shift+L)">VAULT OPEN · LOCK</button>');
   parts.push(esc(homeShort(t.path)));
   $("stRight").innerHTML = parts.join(" · ");
 }
+
+$("stRight").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-st]");
+  if (!b) return;
+  if (b.dataset.st === "lock") lockVault();
+  if (b.dataset.st === "update") updateModal();
+});
 
 /* ---------------- filter and search ---------------- */
 
@@ -718,9 +779,16 @@ async function copyPaths(paths) {
   toast(paths.length === 1 ? `Copied path: ${homeShort(paths[0])}` : `Copied ${paths.length} paths`, { ms: 2000 });
 }
 
+let warnedMoveIn = false;
 async function paste(src = clip, dest = tab().path) {
   if (!src || !src.paths.length) return toast("Nothing to paste. Copy or cut something first.");
   const op = src.op === "cut" ? "move" : src.op;
+  if (isV(dest) && !V.unlocked) return toast("Unlock the Vault first.", { warn: true });
+  if (op === "move" && isV(dest) && !src.paths.every(isV) && !warnedMoveIn) {
+    const ok = await confirmBox("Move into the Vault?", "The files are encrypted into the Vault and the unencrypted originals are deleted. (Hold Ctrl while dragging, or use Copy, to keep the originals.)", "Move into Vault");
+    if (!ok) return;
+    warnedMoveIn = true;
+  }
   let conflict = "keep-both";
   // Look for name clashes in the destination (copying into the same folder just makes a copy).
   try {
@@ -734,7 +802,7 @@ async function paste(src = clip, dest = tab().path) {
   } catch (e) { return fail(e); }
   try {
     const id = await api("transfer", { op, paths: src.paths, dest, conflict });
-    jobs.set(id, { id, op, dest, count: src.paths.length, from: src.paths.slice(), ev: null, cutClip: src === clip && clip.op === "cut" });
+    jobs.set(id, { id, op, dest, count: src.paths.length, from: src.paths.slice(), fromV: src.paths.every(isV), ev: null, cutClip: src === clip && clip.op === "cut" });
     renderJobs();
   } catch (e) { fail(e); }
 }
@@ -747,7 +815,13 @@ onEvent("job", (ev) => {
   if (ev.state === "running") return;
   // finished
   const undo = { type: ev.op, moved: ev.moved, created: ev.created, trashed: ev.trashed, dest: j.dest };
-  if (ev.moved.length || ev.created.length) pushUndo(undo);
+  const vaultJob = ev.op.startsWith("vault-");
+  if (!vaultJob && (ev.moved.length || ev.created.length)) pushUndo(undo);
+  if (vaultJob && ev.state === "done" && ev.created.length) {
+    const intoV = isV(j.dest);
+    const n = ev.created.length, what = n === 1 ? baseName(ev.created[0]) : n + " items";
+    toast(intoV ? `Encrypted ${what} into the Vault${ev.op === "vault-move" && !j.fromV ? " (originals removed)" : ""}` : `Took ${what} out of the Vault`);
+  }
   if (j.cutClip && ev.state === "done") clip = null;
   const landed = [...ev.created, ...ev.moved.map((m) => m[1])];
   const t = tab();
@@ -768,7 +842,10 @@ function renderJobs() {
   box.innerHTML = list.map((j) => {
     const e = j.ev;
     const pct = e.total_bytes ? Math.round((e.done_bytes / e.total_bytes) * 100) : e.state === "running" ? 0 : 100;
-    const verb = e.op === "move" ? (e.state === "running" ? "Moving" : "Moved") : e.state === "running" ? "Copying" : "Copied";
+    const running = e.state === "running";
+    const verb = e.op.startsWith("vault-") && isV(j.dest) && !j.fromV ? (running ? "Encrypting" : "Encrypted")
+      : e.op.startsWith("vault-") && !isV(j.dest) ? (running ? "Decrypting" : "Decrypted")
+      : e.op.endsWith("move") ? (running ? "Moving" : "Moved") : running ? "Copying" : "Copied";
     const what = `${e.total_items > 1 ? e.total_items + " items" : esc(e.current || "")}`;
     const title = e.state === "cancelled" ? "Cancelled" : e.state === "error" ? `${verb} with problems` : `${verb} ${what}`;
     return `<div class="job ${e.state}"><div class="jh"><span class="jt">${title} → ${esc(baseName(j.dest) || "/")}</span>${e.state === "running" ? `<button class="btn sm" data-cancel="${e.id}">Cancel</button>` : ""}</div>
@@ -846,6 +923,23 @@ async function trashSelection() {
   if (!sel.length) return;
   const t = tab();
   if (P.trash && (t.path === P.trash || t.path.startsWith(P.trash + "/"))) return toast("These are already in the Trash. Use Restore, or Empty Trash from the sidebar.");
+  if (sel.some((e) => isV(e.path))) {
+    // Vault items never go to the system Trash (they'd sit there unencrypted): they're deleted for good.
+    const what = sel.length === 1 ? `“${sel[0].name}”` : sel.length + " items";
+    const ok = await confirmBox(`Delete ${what} from the Vault?`, "They're deleted for good. This can't be undone.", "Delete", true);
+    if (!ok) return;
+    const idx = visible.findIndex((e) => e.path === sel[0].path);
+    try {
+      await api("trash", { paths: sel.map((e) => e.path) });
+      await refresh(t);
+      const next = visible[Math.min(idx, visible.length - 1)];
+      t.sel = new Set(next ? [next.path] : []); t.anchor = next?.path; t.focus = next?.path;
+      paintSelection();
+      toast(`Deleted ${what} from the Vault`);
+      if (S.view === "graph") loadGraph();
+    } catch (e) { fail(e); }
+    return;
+  }
   if (S.confirm_trash) {
     const ok = await confirmBox(`Move ${sel.length === 1 ? `“${sel[0].name}”` : sel.length + " items"} to the Trash?`, "You can restore them from the Trash later.", "Move to Trash");
     if (!ok) return;
@@ -883,8 +977,12 @@ async function undo() {
   if (!u) return toast("Nothing to undo.");
   try {
     switch (u.type) {
-      case "rename": await api("move_exact", { from: u.to, to: u.from }); toast(`Undid rename`); break;
-      case "mkdir": case "mkfile": await api("trash", { paths: [u.path] }); toast(`Undid create (moved to Trash)`); break;
+      case "rename":
+        if (isV(u.to)) await api("rename", { path: u.to, name: baseName(u.from) });
+        else await api("move_exact", { from: u.to, to: u.from });
+        toast(`Undid rename`);
+        break;
+      case "mkdir": case "mkfile": await api("trash", { paths: [u.path] }); toast(isV(u.path) ? "Undid create" : "Undid create (moved to Trash)"); break;
       case "trash": { const n = await api("restore", { paths: u.paths }); toast(`Restored ${n} item${n === 1 ? "" : "s"} from Trash`); break; }
       case "copy":
         // Trash the copies, then bring back anything they replaced (never the copies themselves).
@@ -1049,6 +1147,16 @@ async function settingsModal() {
       ${tog("sRestore", "Reopen my tabs at startup", S.restore_tabs)}
       ${tog("sConfirm", "Ask before moving to Trash", S.confirm_trash)}
     </div>
+    <div class="setsec"><h3>Vault</h3>
+      <label class="tog"><span>Lock automatically after</span><select id="sAutolock" class="sel">${[[1, "1 minute"], [5, "5 minutes"], [15, "15 minutes"], [30, "30 minutes"], [60, "1 hour"], [0, "Only when Null File closes"]].map(([v, l]) => `<option value="${v}" ${S.vault_autolock === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <div class="setnote">${V.exists ? (V.unlocked ? "The Vault is open." : "The Vault is locked.") : "No vault yet: open Vault in the sidebar to set one up."} It always locks when Null File closes.</div>
+      ${V.exists ? `<div class="grow"><button type="button" class="btn" id="sPin" ${V.unlocked ? "" : "disabled"}>Change PIN…</button>${V.unlocked ? '<button type="button" class="btn danger" id="sLock">Lock now</button>' : ""}</div>` : ""}
+    </div>
+    <div class="setsec"><h3>Updates</h3>
+      ${tog("sUpd", "Check for new versions", S.check_updates)}
+      <div class="setnote" id="sUpdNote">${UPD ? (UPD.newer ? `Version ${esc(UPD.latest)} is out. ${esc(UPD.how)}` : `You're up to date (${esc(UPD.current)}).`) : "Null File asks GitHub for the latest release once a day. Nothing else is sent."}</div>
+      <div><button type="button" class="btn" id="sUpdNow">Check now</button></div>
+    </div>
     <div class="setsec"><h3>Default file manager</h3>${defLine}</div>
     <div class="setsec"><h3>Keyboard</h3><div class="keys">
       <kbd>Ctrl+K</kbd><span>Command palette</span><kbd>Ctrl+L</kbd><span>Type a path</span><kbd>Ctrl+F</kbd><span>Filter (Enter searches subfolders)</span>
@@ -1056,6 +1164,7 @@ async function settingsModal() {
       <kbd>Ctrl+1 2 3</kbd><span>Grid, list, graph</span><kbd>F2</kbd><span>Rename</span><kbd>Delete</kbd><span>Move to Trash</span>
       <kbd>Ctrl+C X V</kbd><span>Copy, cut, paste</span><kbd>Ctrl+Z</kbd><span>Undo</span><kbd>Ctrl+H</kbd><span>Hidden files</span>
       <kbd>Ctrl+Shift+N</kbd><span>New folder</span><kbd>F4</kbd><span>Terminal here</span><kbd>Ctrl+I</kbd><span>Details panel</span>
+      <kbd>Ctrl+Shift+L</kbd><span>Lock the Vault</span>
     </div></div>
     <div class="setnote">Null File ${esc(VERSION)} · NULLGRID. All rights reserved. · Your data. Your grid.</div>
     <div class="row2"><button class="btn primary">Done</button></div></form>`;
@@ -1070,7 +1179,17 @@ async function settingsModal() {
     if (e.target.id === "sPreview") { S.preview = on; renderInfo(); if (S.view === "graph") graph.redraw(); }
     if (e.target.id === "sRestore") S.restore_tabs = on;
     if (e.target.id === "sConfirm") S.confirm_trash = on;
+    if (e.target.id === "sUpd") S.check_updates = on;
+    if (e.target.id === "sAutolock") S.vault_autolock = +e.target.value;
     saveSettings();
+  };
+  if ($("sPin")) $("sPin").onclick = () => { close(); changePinModal(); };
+  if ($("sLock")) $("sLock").onclick = () => { close(); lockVault(); };
+  $("sUpdNow").onclick = async () => {
+    $("sUpdNote").textContent = "Checking…";
+    await checkUpdates(false);
+    $("sUpdNote").textContent = UPD ? (UPD.newer ? `Version ${UPD.latest} is out. ${UPD.how}` : `You're up to date (${UPD.current}).`) : "Couldn't reach GitHub.";
+    if (UPD && UPD.newer) { close(); updateModal(); }
   };
   const def = $("sDef");
   if (def) def.onclick = async () => { try { const s = await api("make_default"); toast(s.is_default ? "Null File is now the default file manager" : "Couldn't change the default", { warn: !s.is_default }); close(); } catch (err) { fail(err); } };
@@ -1112,6 +1231,7 @@ const graph = createGraph({
 let graphSeq = 0;
 async function loadGraph() {
   const t = tab();
+  if (isV(t.path) && (!V.unlocked || t.locked)) { graph.setData({ root: VROOT, nodes: [], edges: [], truncated: false }, false); $("gStat").textContent = ""; $("glegend").innerHTML = ""; return; }
   const o = gopt();
   const my = ++graphSeq;
   $("gStat").textContent = "Mapping…";
@@ -1207,6 +1327,10 @@ const COMMANDS = [
   { t: "Sort by date modified", run: () => { S.sort = "modified"; S.desc = true; saveSettings(); renderFiles(); } },
   { t: "Sort by type", run: () => { S.sort = "kind"; S.desc = false; saveSettings(); renderFiles(); } },
   { t: "Empty Trash…", run: emptyTrash },
+  { t: "Open the Vault", run: () => go(VROOT) },
+  { t: "Lock the Vault", k: "Ctrl+Shift+L", run: () => lockVault() },
+  { t: "Change Vault PIN", run: changePinModal },
+  { t: "Check for updates", run: async () => { await checkUpdates(false); if (UPD && UPD.newer) updateModal(); else if (UPD) toast(UPD.mode === "system" && UPD.latest === UPD.current && /flatpak|snap/i.test(UPD.how) ? UPD.how : `You're up to date (${UPD.current}).`); } },
   { t: "Make Null File the default file manager", run: async () => { try { const s = await api("make_default"); toast(s.is_default ? "Null File is now the default file manager" : "Couldn't change the default", { warn: !s.is_default }); } catch (e) { fail(e); } } },
   { t: "Settings", run: settingsModal },
 ];
@@ -1325,7 +1449,7 @@ addEventListener("keydown", (e) => {
   const k = e.key, ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && k.toLowerCase() === "k") { e.preventDefault(); return openPalette(); }
   if (ctrl && k.toLowerCase() === "p" && !e.shiftKey) { e.preventDefault(); return openPalette(); }
-  if (ctrl && k.toLowerCase() === "l") { e.preventDefault(); return editPath(); }
+  if (ctrl && !e.shiftKey && k.toLowerCase() === "l") { e.preventDefault(); return editPath(); }
   if (ctrl && k.toLowerCase() === "f") { e.preventDefault(); $("q").focus(); $("q").select(); return; }
   if (ctrl && k.toLowerCase() === "t") { e.preventDefault(); return addTab(tab().path); }
   if (ctrl && k.toLowerCase() === "w") { e.preventDefault(); return closeTab(); }
@@ -1341,6 +1465,7 @@ addEventListener("keydown", (e) => {
   if (ctrl && e.shiftKey && k.toLowerCase() === "n") { e.preventDefault(); return newFolder(); }
   if (ctrl && e.altKey && k.toLowerCase() === "n") { e.preventDefault(); return newFile(); }
   if (k === "F4") { e.preventDefault(); return terminalAt(tab().path); }
+  if (ctrl && e.shiftKey && k.toLowerCase() === "l") { e.preventDefault(); return lockVault(); }
   if (inInput) return;
   if (k === "Escape") {
     if (tab().search) return endSearch();
@@ -1396,6 +1521,7 @@ $("menuBtn").onclick = (e) => {
     { label: S.hidden ? "Hide hidden files" : "Show hidden files", key: "Ctrl+H", run: toggleHidden },
     { label: S.preview ? "Hide details panel" : "Show details panel", key: "Ctrl+I", run: togglePreview },
     { label: "Undo", key: "Ctrl+Z", disabled: !undoStack.length, run: undo },
+    V.unlocked ? { label: "Lock the Vault", key: "Ctrl+Shift+L", run: () => lockVault() } : { label: "Open the Vault", run: () => go(VROOT) },
     "-",
     { label: "Settings & shortcuts", run: settingsModal },
   ]);
@@ -1453,6 +1579,290 @@ async function openPaths(paths) {
   }
 }
 
+/* ---------------- vault ---------------- */
+
+let vscreen = "pin"; // pin | setup | words | recover
+let vwords = "";
+let vwaitTimer = null;
+
+async function refreshVault() {
+  try { V = await api("vault_status"); } catch { /* keep */ }
+}
+
+const pinField = (id, ph, auto = false) =>
+  `<input id="${id}" class="pinin" type="password" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="300" placeholder="${ph}" ${auto ? "autofocus" : ""}>`;
+const keypad = () => `<div class="keypad">${["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "↵"].map((k) => `<button type="button" data-k="${k}">${k}</button>`).join("")}</div>`;
+
+function pinStrength(pin) {
+  if (!pin) return "";
+  if (pin.length < 3) return '<span class="warn">At least 3 digits.</span>';
+  if (pin.length < 6) return `<span class="warn">${pin.length} digits works, but anyone who copies the vault files could try every ${pin.length}-digit PIN quickly. 6 or more is much safer.</span>`;
+  if (pin.length < 10) return '<span class="ok">Good. Longer is even stronger.</span>';
+  return '<span class="ok">Strong.</span>';
+}
+
+function renderLock() {
+  const box = $("vlock");
+  clearInterval(vwaitTimer);
+  if (!V.exists && vscreen !== "words") vscreen = "setup";
+  if (V.exists && vscreen === "setup") vscreen = "pin";
+  const head = (title, sub) => `<div class="vicon">${icon(vscreen === "words" ? "unlock" : "lock")}</div><h2>${title}</h2>${sub ? `<p>${sub}</p>` : ""}`;
+  if (vscreen === "setup") {
+    box.innerHTML = `<form class="vbox" id="vform">${head("SET UP YOUR VAULT", "A private folder that's encrypted on this computer. Pick a PIN of 3 to 300 digits.")}
+      ${pinField("vp1", "New PIN", true)}${pinField("vp2", "Type it again")}
+      <div class="vnote" id="vstr"></div><div class="verr" id="verr"></div>
+      <button class="btn primary big">Create vault</button></form>`;
+    const p1 = $("vp1"), p2 = $("vp2");
+    p1.oninput = () => { p1.value = p1.value.replace(/\D/g, ""); $("vstr").innerHTML = pinStrength(p1.value); };
+    p2.oninput = () => { p2.value = p2.value.replace(/\D/g, ""); };
+    $("vform").onsubmit = async (e) => {
+      e.preventDefault();
+      if (p1.value.length < 3) return ($("verr").textContent = "The PIN needs at least 3 digits.");
+      if (p1.value !== p2.value) return ($("verr").textContent = "The two PINs don't match.");
+      $("verr").textContent = "";
+      busy(true, "Creating…");
+      try {
+        vwords = await api("vault_setup", { pin: p1.value });
+        await refreshVault();
+        renderSide(); renderStatus();
+        vscreen = "words";
+      } catch (err) { $("verr").textContent = errText(err); }
+      busy(false);
+      if (vscreen === "words") renderLock();
+    };
+    setTimeout(() => p1.focus(), 30);
+    return;
+  }
+  if (vscreen === "words") {
+    const w = vwords.split(" ");
+    box.innerHTML = `<form class="vbox wide" id="vform">${head("YOUR RECOVERY KEY", "If you ever forget your PIN, these 24 words are the only way back in. Write them down in order and keep them somewhere safe. They won't be shown again.")}
+      <ol class="words">${w.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>
+      <label class="vcheck"><input type="checkbox" id="vok"> I've written down all 24 words</label>
+      <button class="btn primary big" id="vgo" disabled>Open my vault</button></form>`;
+    $("vok").onchange = (e) => ($("vgo").disabled = !e.target.checked);
+    $("vform").onsubmit = (e) => { e.preventDefault(); vwords = ""; vscreen = "pin"; afterUnlock(); };
+    return;
+  }
+  if (vscreen === "recover") {
+    box.innerHTML = `<form class="vbox wide" id="vform">${head("RESET YOUR PIN", "Type your 24-word recovery key, then choose a new PIN.")}
+      <textarea id="vwords" class="vwords" rows="4" spellcheck="false" autocomplete="off" placeholder="word1 word2 word3 …"></textarea>
+      ${pinField("vp1", "New PIN")}${pinField("vp2", "Type it again")}
+      <div class="vnote" id="vstr"></div><div class="verr" id="verr"></div>
+      <div class="grow"><button type="button" class="btn" id="vback">Back</button><button class="btn primary">Reset PIN and open</button></div></form>`;
+    const p1 = $("vp1"), p2 = $("vp2");
+    p1.oninput = () => { p1.value = p1.value.replace(/\D/g, ""); $("vstr").innerHTML = pinStrength(p1.value); };
+    p2.oninput = () => { p2.value = p2.value.replace(/\D/g, ""); };
+    $("vback").onclick = () => { vscreen = "pin"; renderLock(); };
+    $("vform").onsubmit = async (e) => {
+      e.preventDefault();
+      if (p1.value.length < 3) return ($("verr").textContent = "The new PIN needs at least 3 digits.");
+      if (p1.value !== p2.value) return ($("verr").textContent = "The two PINs don't match.");
+      busy(true, "Checking…");
+      try { await api("vault_recover", { words: $("vwords").value, pin: p1.value }); vscreen = "pin"; busy(false); afterUnlock("PIN changed. Vault unlocked."); }
+      catch (err) { busy(false); $("verr").textContent = errText(err); }
+    };
+    setTimeout(() => $("vwords").focus(), 30);
+    return;
+  }
+  // unlock
+  box.innerHTML = `<form class="vbox" id="vform">${head("VAULT LOCKED", "Enter your PIN.")}
+    ${pinField("vpin", "PIN", true)}
+    <div class="verr" id="verr"></div>
+    ${keypad()}
+    <button type="button" class="linkbtn" id="vforgot">Forgot your PIN?</button></form>`;
+  const inp = $("vpin");
+  const submit = async () => {
+    if (inp.disabled) return;
+    if (!inp.value) return;
+    busy(true, "Unlocking…");
+    try {
+      await api("vault_unlock", { pin: inp.value });
+      busy(false);
+      afterUnlock();
+    } catch (err) {
+      busy(false);
+      const m = errText(err);
+      inp.value = "";
+      await refreshVault();
+      if (m.startsWith("WRONG:") || m.startsWith("WAIT:")) {
+        $("vform").classList.remove("shake"); void $("vform").offsetWidth; $("vform").classList.add("shake");
+        showWait(m.startsWith("WRONG") ? "Wrong PIN." : "");
+      } else $("verr").textContent = m;
+      inp.focus();
+    }
+  };
+  inp.oninput = () => { inp.value = inp.value.replace(/\D/g, ""); };
+  inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); submit(); } if (e.key === "Escape") inp.value = ""; };
+  $("vform").onsubmit = (e) => { e.preventDefault(); submit(); };
+  box.querySelector(".keypad").onclick = (e) => {
+    const k = e.target.closest("[data-k]")?.dataset.k;
+    if (!k || inp.disabled) return;
+    if (k === "⌫") inp.value = inp.value.slice(0, -1);
+    else if (k === "↵") submit();
+    else if (inp.value.length < 300) inp.value += k;
+    inp.focus();
+  };
+  $("vforgot").onclick = () => { vscreen = "recover"; renderLock(); };
+  showWait("");
+  setTimeout(() => inp.focus(), 30);
+}
+
+function showWait(prefix) {
+  const inp = $("vpin"), err = $("verr");
+  if (!inp) return;
+  clearInterval(vwaitTimer);
+  let left = V.wait || 0;
+  const tick = () => {
+    if (left > 0) {
+      inp.disabled = true;
+      err.textContent = `${prefix ? prefix + " " : ""}Too many wrong PINs. Try again in ${left >= 60 ? Math.ceil(left / 60) + " min" : left + " s"}.`;
+      left--;
+    } else {
+      inp.disabled = false;
+      err.textContent = prefix && V.failures ? `${prefix} ${V.failures >= 2 ? "After 3 wrong tries you'll have to wait a bit between tries." : ""}` : "";
+      clearInterval(vwaitTimer);
+      inp.focus();
+    }
+  };
+  tick();
+  if (left > 0) vwaitTimer = setInterval(tick, 1000);
+}
+
+function busy(on, label = "") {
+  const f = $("vform");
+  if (!f) return;
+  f.classList.toggle("busy", on);
+  f.querySelectorAll("button, input, textarea").forEach((b) => (b.disabled = on));
+  let b = f.querySelector(".vbusy");
+  if (on && !b) { b = document.createElement("div"); b.className = "vbusy"; f.appendChild(b); }
+  if (b) b.textContent = on ? label : "";
+}
+
+async function afterUnlock(msg = "Vault unlocked") {
+  await refreshVault();
+  lastActive = Date.now();
+  for (const t of tabs) if (isV(t.path)) { t.locked = false; await load(t); }
+  render();
+  if (S.view === "graph" && isV(tab().path)) loadGraph();
+  toast(msg, { ms: 1800 });
+  $("files").focus();
+}
+
+async function lockVault(reason) {
+  if (!V.unlocked) return;
+  let saved = 0;
+  try { saved = await api("vault_lock"); } catch (e) { fail(e); }
+  await refreshVault();
+  // Forget every name from inside the vault that the window still holds.
+  for (const t of tabs) {
+    t.hist = t.hist.filter((p) => !isV(p) || p === VROOT);
+    t.fwd = t.fwd.filter((p) => !isV(p) || p === VROOT);
+    if (isV(t.path)) { t.path = VROOT; t.listing = null; t.locked = true; t.sel = new Set(); t.search = null; t.filter = ""; t.focus = null; t.graphSel = null; }
+  }
+  if (clip && clip.paths.some(isV)) clip = null;
+  for (let i = undoStack.length - 1; i >= 0; i--) {
+    const u = undoStack[i];
+    if (isV(u.path || "") || isV(u.to || "") || isV(u.dest || "")) undoStack.splice(i, 1);
+  }
+  vscreen = "pin";
+  if (isV(tab().path)) $("q").value = "";
+  render();
+  if (S.view === "graph" && isV(tab().path)) graph.resetLayout();
+  toast(`${reason || "Vault locked"}${saved ? ` · saved ${saved} edited file${saved === 1 ? "" : "s"} back` : ""}`, { ms: 2500 });
+}
+
+function changePinModal() {
+  if (!V.unlocked) return toast("Unlock the Vault first.", { warn: true });
+  const m = $("modal");
+  m.innerHTML = `<form><h2>Change Vault PIN</h2><p>Your recovery key stays the same.</p>
+    <label class="f">New PIN<input type="password" inputmode="numeric" id="cp1" class="pinin" autocomplete="off" maxlength="300"></label>
+    <label class="f">Type it again<input type="password" inputmode="numeric" id="cp2" class="pinin" autocomplete="off" maxlength="300"></label>
+    <div class="vnote" id="cpstr"></div><div class="err" id="cperr"></div>
+    <div class="row2"><button type="button" class="btn" id="mCancel">Cancel</button><button class="btn primary" id="cpok">Change PIN</button></div></form>`;
+  m.hidden = false;
+  const p1 = $("cp1"), p2 = $("cp2");
+  p1.focus();
+  p1.oninput = () => { p1.value = p1.value.replace(/\D/g, ""); $("cpstr").innerHTML = pinStrength(p1.value); };
+  p2.oninput = () => { p2.value = p2.value.replace(/\D/g, ""); };
+  const close = () => { m.hidden = true; m.innerHTML = ""; files.focus(); };
+  $("mCancel").onclick = close;
+  m.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Escape") close(); };
+  m.querySelector("form").onsubmit = async (e) => {
+    e.preventDefault();
+    if (p1.value.length < 3) return ($("cperr").textContent = "The PIN needs at least 3 digits.");
+    if (p1.value !== p2.value) return ($("cperr").textContent = "The two PINs don't match.");
+    $("cpok").disabled = true; $("cpok").textContent = "Saving…";
+    try { await api("vault_change_pin", { pin: p1.value }); close(); toast("Vault PIN changed"); }
+    catch (err) { $("cperr").textContent = errText(err); $("cpok").disabled = false; $("cpok").textContent = "Change PIN"; }
+  };
+}
+
+// Idle auto-lock, and saving back edits made in other apps when you come back to the window.
+let lastActive = Date.now();
+["pointerdown", "keydown", "wheel"].forEach((ev) => addEventListener(ev, () => (lastActive = Date.now()), true));
+setInterval(() => {
+  if (V.unlocked && S.vault_autolock > 0 && Date.now() - lastActive > S.vault_autolock * 60000) lockVault(`Vault locked after ${S.vault_autolock} min idle`);
+}, 15000);
+addEventListener("focus", async () => {
+  if (!V.unlocked) return;
+  try { const n = await api("vault_sync"); if (n) { tabs.forEach((t) => isV(t.path) && refresh(t)); toast(`Saved ${n} edited file${n === 1 ? "" : "s"} back into the Vault`, { ms: 2200 }); } } catch { /* ignore */ }
+});
+
+/* ---------------- updates ---------------- */
+
+let UPD = null;
+async function checkUpdates(quiet = true) {
+  try {
+    UPD = await api("update_check");
+    renderStatus();
+    if (quiet && UPD.newer && UPD.latest !== S.skip_version) toast(`Null File ${UPD.latest} is available`, { action: "See what's new", run: updateModal, ms: 9000 });
+  } catch (e) { if (!quiet) fail(e); }
+}
+
+function updateModal() {
+  if (!UPD) return;
+  const m = $("modal");
+  // Only the "What's new" part of the release notes; the rest is download instructions.
+  const m1 = /#+\s*What['’]s new\s*\n([\s\S]*?)(?=\n#+\s|\n\*\*Linux|$)/i.exec(UPD.notes || "");
+  const notes = (m1 ? m1[1] : "").trim().slice(0, 1800);
+  const btns = UPD.mode === "self"
+    ? '<button type="button" class="btn primary" id="uNow">Update now</button>'
+    : UPD.mode === "manual" ? '<button type="button" class="btn primary" id="uPage">Open the release page</button>' : '<button type="button" class="btn primary" id="uOk">OK</button>';
+  m.innerHTML = `<form class="wide"><h2>Null File ${esc(UPD.latest)} is out</h2>
+    <p>You have ${esc(UPD.current)}. ${esc(UPD.how)}</p>
+    ${notes ? `<pre class="notes">${esc(notes)}</pre>` : ""}
+    <div class="uprog" id="uProg" hidden><div class="jbar"><i id="uBar" style="width:0%"></i></div><div class="setnote" id="uMsg"></div></div>
+    <div class="err" id="uErr"></div>
+    <div class="row2"><button type="button" class="btn" id="uSkip">Skip this version</button><button type="button" class="btn" id="uLater">Later</button>${btns}</div></form>`;
+  m.hidden = false;
+  const close = () => { m.hidden = true; m.innerHTML = ""; files.focus(); };
+  m.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Escape") close(); };
+  m.querySelector("form").onsubmit = (e) => e.preventDefault();
+  $("uLater").onclick = close;
+  $("uSkip").onclick = () => { S.skip_version = UPD.latest; saveSettings(); renderStatus(); close(); };
+  if ($("uOk")) $("uOk").onclick = close;
+  if ($("uPage")) $("uPage").onclick = () => { api("open_url", { url: UPD.url }).catch(fail); close(); };
+  if ($("uNow")) $("uNow").onclick = async () => {
+    $("uNow").disabled = true; $("uSkip").disabled = true;
+    $("uProg").hidden = false; $("uMsg").textContent = "Downloading…";
+    try {
+      const v = await api("update_install");
+      $("uBar").style.width = "100%";
+      $("uMsg").textContent = `Installed ${v}.${V.unlocked ? " Restarting locks the Vault." : ""}`;
+      $("uNow").textContent = "Restart now"; $("uNow").disabled = false;
+      $("uNow").onclick = async () => { if (V.unlocked) await lockVault(); api("relaunch"); };
+    } catch (err) { $("uErr").textContent = errText(err); $("uNow").disabled = false; $("uSkip").disabled = false; }
+  };
+}
+onEvent("update-progress", (p) => {
+  const bar = $("uBar"), msg = $("uMsg");
+  if (!bar) return;
+  if (p.stage === "install") { bar.style.width = "100%"; msg.textContent = "Checking and installing…"; return; }
+  const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+  bar.style.width = pct + "%";
+  msg.textContent = `Downloading… ${fmtSize(p.done)}${p.total ? " of " + fmtSize(p.total) : ""}`;
+});
+
 /* ---------------- start ---------------- */
 
 async function start() {
@@ -1463,6 +1873,7 @@ async function start() {
   try { VERSION = await window.__TAURI__.app.getVersion(); } catch { VERSION = ""; }
   S = { ...S, ...(await api("get_settings")) };
   P = await api("places");
+  await refreshVault();
   document.documentElement.style.setProperty("--side", S.sidebar_w + "px");
   const pending = await api("take_pending");
   const startTabs = [];
@@ -1486,6 +1897,10 @@ async function start() {
   setView(S.view === "graph" ? "graph" : S.view === "list" ? "list" : "grid");
   watchTabs();
   files.focus();
+  if (S.check_updates) {
+    setTimeout(() => checkUpdates(true), 6000);
+    setInterval(() => S.check_updates && checkUpdates(true), 24 * 3600 * 1000);
+  }
   // Drives come and go: refresh the sidebar now and then.
   setInterval(async () => { try { const np = await api("places"); if (JSON.stringify(np.drives) !== JSON.stringify(P.drives)) { P = np; renderSide(); } } catch { /* ignore */ } }, 5000);
 }

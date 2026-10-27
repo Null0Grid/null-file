@@ -14,7 +14,10 @@ export function onEvent(name, handler) {
 
 /** URL the webview can load a local file from (thumbnails, previews). */
 export function fileUrl(path) {
-  return native ? T.core.convertFileSrc(path) : "";
+  if (!native) return "";
+  // Vault files are decrypted on the fly by the app's own nfvault:// handler.
+  if (path.startsWith("vault:")) return "nfvault://localhost/" + encodeURIComponent(path);
+  return T.core.convertFileSrc(path);
 }
 
 /** Files dragged in from other apps. handler({type, paths, x, y}). */
