@@ -2,7 +2,7 @@
 
 Null Grid's file manager for Linux, and the default file manager in Null OS.
 
-- Repo: **Null0Grid/null-file** (proprietary, "Copyright (c) 2026 NULLGRID. All rights reserved."). Version **1.1.0** (1.0.0 released 2026-10-27; 1.1.0 adds the Vault and automatic updates).
+- Repo: **Null0Grid/null-file** (proprietary, "Copyright (c) 2026 NULLGRID. All rights reserved."). Version **1.2.0** (1.0.0 and 1.1.0 released 2026-10-27; 1.1.0 added the Vault and automatic updates, 1.2.0 answers "Show in folder").
 - Stack: **Tauri 2** (Rust backend + plain ES-module frontend, no bundler), same as Null Notes. Fonts (IBM Plex, Silkscreen) and d3-force are copied from Null Notes.
 - App id / desktop id: `dev.nullgrid.file` / `dev.nullgrid.file.desktop` (deb, tar.gz, AUR, Flatpak). Tauri's rpm/AppImage bundler names its entry `null-file.desktop`; snaps use `null-file_null-file.desktop`. `sysint::desktop_id()` finds whichever is installed.
 - Binary: `null-file`. Settings: `~/.config/dev.nullgrid.file/settings.json`.
@@ -26,7 +26,9 @@ Tabs (restored at startup), breadcrumbs + typed paths, sidebar (XDG places, pinn
 ## Default file manager
 `null-file --set-default` or Settings → runs `xdg-mime default <desktop id> inode/directory` (via `flatpak-spawn --host` inside Flatpak). Every desktop entry declares `MimeType=inode/directory;`.
 
+## "Show in folder" (1.2.0)
+`src-tauri/src/fm1.rs` serves `org.freedesktop.FileManager1` (ShowItems / ShowFolders / ShowItemProperties) on the session bus when Null File is the default (or was started with `--dbus-activated`), replacing the current owner. `--set-default` also writes `~/.local/share/dbus-1/services/org.freedesktop.FileManager1.service` (user level beats Dolphin's/Nautilus's system files) so D-Bus starts Null File when it's closed. Flatpak has `--own-name`; Snap can't own the name.
+
 ## Not done yet
-- `org.freedesktop.FileManager1` D-Bus service (what "Show in folder" in Firefox/Chrome/KDE apps calls); without it those apps fall back to xdg-open on the folder, which still opens Null File.
 - Dragging files out of Null File into other apps (Tauri limitation); dragging in works.
 - Permanent delete (Shift+Delete) on purpose; only Empty Trash deletes for good (the Vault is the exception).

@@ -169,7 +169,9 @@ pub fn default_status() -> DefaultStatus {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
     let id = desktop_id();
-    DefaultStatus { is_default: current == id, current, can_set: in_flatpak() || which("xdg-mime") }
+    // Also needs the "Show in folder" service file (added in 1.2.0), so older setups get the button again.
+    let dbus_ok = crate::fm1::exec_line().is_none() || crate::fm1::service_file_installed();
+    DefaultStatus { is_default: current == id && dbus_ok, current, can_set: in_flatpak() || which("xdg-mime") }
 }
 
 pub fn make_default() -> Result<DefaultStatus, String> {
@@ -183,6 +185,10 @@ pub fn make_default() -> Result<DefaultStatus, String> {
         .unwrap_or(false);
     if !ok {
         return Err("xdg-mime couldn't set the default file manager.".into());
+    }
+    // So "Show in folder" from other apps starts Null File too (org.freedesktop.FileManager1).
+    if let Err(e) = crate::fm1::install_service_file() {
+        eprintln!("{e}");
     }
     Ok(default_status())
 }

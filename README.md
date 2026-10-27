@@ -18,6 +18,7 @@ Null File is a keyboard-friendly file manager in the Neon Lab look of **[Null Gr
 - **Find things fast:** type-ahead, filter as you type (Ctrl+F), press Enter to search every subfolder, and a **Ctrl+K command palette** for actions and folders (type `/` or `~` to jump by path, Tab to complete).
 - **Graph view** (Ctrl+3): the folder tree as a force-directed map. Folders are circles, files are squares colored by type, sized by how much they hold. Depth slider, pan, zoom, drag, double-click to dive in.
 - **Open a terminal here** (F4), Konsole first, then whatever terminal you have.
+- **"Show in folder"** from your browser or any other app opens Null File with the file selected (when it's your default file manager).
 - **Live updates** when files change on disk, and new drives appear in the sidebar on their own.
 - **The Vault** (new in 1.1): a private folder in the sidebar that's encrypted on disk and opens with a PIN. See below.
 - **Automatic updates** (new in 1.1): .deb and .rpm installs update with the rest of your system; the AppImage and tar.gz update themselves.
@@ -32,13 +33,13 @@ Download from [Releases](../../releases), for **x86_64** or **ARM64** (`aarch64`
 
 | Distro | File | How |
 |---|---|---|
-| Ubuntu 22.04+, Debian 12+, Mint, Null OS | `null-file_1.1.0_amd64.deb` | `sudo apt install ./null-file_1.1.0_amd64.deb` |
-| Fedora, openSUSE | `null-file-1.1.0-1.x86_64.rpm` | `sudo dnf install ./null-file-1.1.0-1.x86_64.rpm` (openSUSE: `sudo zypper install ./…`) |
+| Ubuntu 22.04+, Debian 12+, Mint, Null OS | `null-file_1.2.0_amd64.deb` | `sudo apt install ./null-file_1.2.0_amd64.deb` |
+| Fedora, openSUSE | `null-file-1.2.0-1.x86_64.rpm` | `sudo dnf install ./null-file-1.2.0-1.x86_64.rpm` (openSUSE: `sudo zypper install ./…`) |
 | Arch, Manjaro, EndeavourOS | AUR: `null-file-bin` | `yay -S null-file-bin`, or build the attached `PKGBUILD` with `makepkg -si` |
-| Any, without installing | `Null-File-1.1.0-x86_64.AppImage` | `chmod +x Null-File-*.AppImage`, then run it |
-| Any, sandboxed; also RHEL, Rocky, Alma | `null-file-1.1.0-x86_64.flatpak` | `flatpak install ./null-file-1.1.0-x86_64.flatpak` |
-| Any with snapd | `null-file_1.1.0_amd64.snap` | `sudo snap install --dangerous ./null-file_1.1.0_amd64.snap` (home folder and USB drives only) |
-| Anything else | `null-file-1.1.0-linux-x86_64.tar.gz` | unpack, then `./null-file`, or `./install.sh` to add it to your app menu |
+| Any, without installing | `Null-File-1.2.0-x86_64.AppImage` | `chmod +x Null-File-*.AppImage`, then run it |
+| Any, sandboxed; also RHEL, Rocky, Alma | `null-file-1.2.0-x86_64.flatpak` | `flatpak install ./null-file-1.2.0-x86_64.flatpak` |
+| Any with snapd | `null-file_1.2.0_amd64.snap` | `sudo snap install --dangerous ./null-file_1.2.0_amd64.snap` (home folder and USB drives only) |
+| Anything else | `null-file-1.2.0-linux-x86_64.tar.gz` | unpack, then `./null-file`, or `./install.sh` to add it to your app menu |
 
 Check a download with `sha256sum -c SHA256SUMS --ignore-missing`.
 
@@ -54,7 +55,7 @@ So "Open folder" in other apps and your desktop's file links open Null File:
 null-file --set-default
 ```
 
-or **☰ → Settings & shortcuts → Make Null File the default**. Both run `xdg-mime default <desktop file> inode/directory` for your user (on the host, for the Flatpak). KDE Plasma, GNOME and most desktops follow it.
+or **☰ → Settings & shortcuts → Make Null File the default**. Both run `xdg-mime default <desktop file> inode/directory` for your user (on the host, for the Flatpak), which KDE Plasma, GNOME and most desktops follow. They also register Null File for "Show in folder" (`org.freedesktop.FileManager1`), so a browser's "Show in folder" after a download opens Null File with the file selected, even when Null File is closed. (Not in the Snap, which can't take that over.)
 
 ### Command line
 

@@ -27,6 +27,8 @@ finish-args:
   - --filesystem=xdg-data/Trash
   # "Open terminal here" starts the terminal on the host
   - --talk-name=org.freedesktop.Flatpak
+  # answer "Show in folder" from other apps
+  - --own-name=org.freedesktop.FileManager1
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:

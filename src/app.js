@@ -1569,6 +1569,20 @@ onEvent("changed", (dirs) => {
   }, 150);
 });
 onEvent("open-paths", (paths) => openPaths(paths));
+// Other apps asking to "show this file in the file manager" (org.freedesktop.FileManager1).
+onEvent("show-paths", ({ mode, paths }) => {
+  if (mode === "folders") { paths.forEach((p) => addTab(p)); return; }
+  // Items: open each one's folder (one tab per folder) with the item selected.
+  const seen = new Set();
+  for (const p of paths) {
+    const dir = parentOf(p) || "/";
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    const t = tabs.find((x) => x.path === dir);
+    if (t) { switchTab(tabs.indexOf(t)); t.sel = new Set([p]); t.anchor = p; t.focus = p; refresh(t).then(() => paintSelection()); }
+    else addTab(dir, true, p);
+  }
+});
 
 async function openPaths(paths) {
   for (const p of paths) {
@@ -1880,6 +1894,13 @@ async function start() {
   if (pending.length) {
     for (const p of pending) {
       try { const st = await api("stat", { path: p }); startTabs.push(st.dir ? { path: p } : { path: parentOf(p), select: p }); } catch { /* skip */ }
+    }
+  }
+  // "Show in folder" requests that started Null File (org.freedesktop.FileManager1).
+  for (const sh of await api("ui_ready")) {
+    for (const p of sh.paths) {
+      if (sh.mode === "folders") startTabs.push({ path: p });
+      else if (!startTabs.some((x) => x.select === p)) startTabs.push({ path: parentOf(p) || "/", select: p });
     }
   }
   if (!startTabs.length && S.restore_tabs && S.last_tabs.length) {

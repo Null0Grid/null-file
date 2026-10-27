@@ -1,5 +1,6 @@
 //! Null File backend. Command and argument names match src/backend.js.
 
+mod fm1;
 mod fsops;
 mod search;
 mod sysint;
@@ -88,7 +89,7 @@ struct Job {
 }
 
 #[derive(Default)]
-struct AppState {
+pub(crate) struct AppState {
     jobs: Mutex<HashMap<u64, Job>>,
     next_job: AtomicU64,
     search_gen: Arc<AtomicU64>,
@@ -99,6 +100,26 @@ struct AppState {
     settings_lock: Mutex<()>,
     /// The unlocked vault (None while locked).
     vault: vault::Shared,
+    /// Our org.freedesktop.FileManager1 service, while we own the name.
+    dbus: Mutex<Option<zbus::blocking::Connection>>,
+    /// Set once the window listens for "show-paths"; requests before that wait here.
+    pub(crate) ui_ready: AtomicBool,
+    pub(crate) pending_shows: Mutex<Vec<fm1::Show>>,
+}
+
+/// Answer "show this file in the file manager" requests (in the background: D-Bus can be slow or missing).
+fn start_fm1(app: AppHandle, replace: bool) {
+    std::thread::spawn(move || {
+        let st = app.state::<AppState>();
+        if st.dbus.lock().unwrap().is_some() {
+            return;
+        }
+        match fm1::start(app.clone(), replace) {
+            Ok((conn, true)) => *st.dbus.lock().unwrap() = Some(conn),
+            Ok((_, false)) => {} // another file manager has the name and won't give it up
+            Err(e) => eprintln!("{e}"),
+        }
+    });
 }
 
 fn vstore() -> vault::Store {
@@ -549,8 +570,12 @@ fn default_status() -> sysint::DefaultStatus {
 }
 
 #[tauri::command]
-fn make_default() -> R<sysint::DefaultStatus> {
-    sysint::make_default()
+fn make_default(app: AppHandle) -> R<sysint::DefaultStatus> {
+    let s = sysint::make_default()?;
+    if s.is_default {
+        start_fm1(app, true);
+    }
+    Ok(s)
 }
 
 #[tauri::command]
@@ -661,6 +686,14 @@ fn save_settings(app: AppHandle, st: State<'_, AppState>, settings: Settings) ->
     write_atomic(&p, serde_json::to_string_pretty(&settings).unwrap().as_bytes()).map_err(|e| e.to_string())
 }
 
+/// The window is listening: hand over "show in folder" requests that arrived before it was.
+#[tauri::command]
+fn ui_ready(st: State<'_, AppState>) -> Vec<fm1::Show> {
+    let mut q = st.pending_shows.lock().unwrap();
+    st.ui_ready.store(true, Ordering::SeqCst);
+    std::mem::take(&mut *q)
+}
+
 /// Paths passed on the command line, consumed once by the UI.
 #[tauri::command]
 fn take_pending(st: State<'_, AppState>) -> Vec<String> {
@@ -739,6 +772,7 @@ pub fn run() {
         }
         return;
     }
+    let activated = args.iter().any(|a| a == fm1::ACTIVATED_FLAG);
     let cwd = std::env::current_dir().unwrap_or_else(|_| fsops::home());
     let state = AppState::default();
     *state.pending.lock().unwrap() = parse_args(&args, &cwd);
@@ -754,6 +788,17 @@ pub fn run() {
             }
         }))
         .manage(state)
+        .setup(move |app| {
+            // Claim org.freedesktop.FileManager1 when we're the default file manager,
+            // or when D-Bus started us to answer it.
+            let h = app.handle().clone();
+            std::thread::spawn(move || {
+                if activated || sysint::default_status().is_default {
+                    start_fm1(h, true);
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             list_dir,
             stat,
@@ -783,6 +828,7 @@ pub fn run() {
             get_settings,
             save_settings,
             take_pending,
+            ui_ready,
             watch,
             vault_status,
             vault_setup,

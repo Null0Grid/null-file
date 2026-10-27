@@ -29,8 +29,9 @@ chmod 644 "$apps/dev.nullgrid.file.desktop"
 
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$apps" 2>/dev/null || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$icons" 2>/dev/null || true
-if [ "$makedefault" = 1 ] && command -v xdg-mime >/dev/null 2>&1; then
-  xdg-mime default dev.nullgrid.file.desktop inode/directory && echo "Null File now opens folders."
+if [ "$makedefault" = 1 ]; then
+  # sets the folder handler and the "Show in folder" D-Bus service for this user
+  "$bin/null-file" --set-default && echo "Null File now opens folders."
 fi
 
 echo "Installed Null File to $bin/null-file."

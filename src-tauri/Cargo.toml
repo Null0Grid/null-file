@@ -1,6 +1,6 @@
 [package]
 name = "null-file"
-version = "1.1.0"
+version = "1.2.0"
 description = "Null File - a Neon Lab file manager for Linux"
 authors = ["Luke"]
 edition = "2021"
@@ -30,6 +30,8 @@ base64 = "0.22"
 zeroize = "1"
 sha2 = "0.10"
 bip39 = "2"
+# "Show in folder" from other apps (org.freedesktop.FileManager1)
+zbus = "5"
 # update checks
 ureq = { version = "2", features = ["json", "proxy-from-env", "native-certs"] }
 
