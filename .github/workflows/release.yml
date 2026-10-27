@@ -1,0 +1,116 @@
+name: Release
+
+# Easiest: Actions → Release → Run workflow, and type the version (e.g. 1.0.0).
+# If that tag doesn't exist yet, it's created on the latest main, along with
+# the release. If it exists, that tag is built. Or push a tag yourself, with
+# or without a "v" (v1.0.0 or 1.0.0). Either way it must match the app version
+# in src-tauri/tauri.conf.json.
+# Builds every Linux package for x86_64 and ARM64 (linux-packages.yml) and
+# attaches them to the release for that tag (an existing release keeps its
+# published/draft state; a new one is published). Null File is Linux only.
+
+on:
+  push:
+    tags: ["v*", "[0-9]*.[0-9]*.[0-9]*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version to release, e.g. 1.0.0 (a new tag is made on main if it doesn't exist)"
+        required: true
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    name: Check tag matches the app version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      ref: ${{ steps.v.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        run: |
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            ref=$(git rev-parse "refs/tags/$TAG^{commit}")
+          else
+            ref=$(git rev-parse HEAD)
+            echo "::notice::tag $TAG doesn't exist yet; the release will create it on $(git log -1 --format='%h %s' HEAD)"
+          fi
+          git checkout -q "$ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          app=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          tag="${TAG#v}"
+          if [ "$app" != "$tag" ]; then echo "::error::tag $TAG but tauri.conf.json says $app"; exit 1; fi
+          echo "version=$app" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Linux packages
+    needs: version
+    uses: ./.github/workflows/linux-packages.yml
+    with:
+      ref: ${{ needs.version.outputs.ref }}
+
+  release:
+    name: Attach to the GitHub release
+    needs: [version, linux]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: art
+      - name: Collect the files
+        run: |
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p out
+          cp art/linux-x86_64/* art/linux-aarch64/* out/
+          cp art/flatpak-x86_64/null-file-x86_64.flatpak "out/null-file-$v-x86_64.flatpak"
+          cp art/flatpak-aarch64/null-file-aarch64.flatpak "out/null-file-$v-aarch64.flatpak"
+          # AUR: PKGBUILD as is, and both files together (GitHub drops the dot from ".SRCINFO")
+          cp art/aur/PKGBUILD out/PKGBUILD
+          tar -C art/aur -czf "out/null-file-bin-$v-aur.tar.gz" PKGBUILD .SRCINFO
+          # Flathub: the manifest built from this tag, and its crate list
+          commit="$(git rev-parse HEAD)"
+          python3 - "$v" "$commit" <<'PY'
+          import re, sys
+          v, commit = sys.argv[1], sys.argv[2]
+          m = open("packaging/flatpak/dev.nullgrid.file.yml").read()
+          git = (f"      - type: git\n        url: https://github.com/Null0Grid/null-file.git\n"
+                 f"        tag: \"{v}\"\n        commit: {commit}\n")
+          m, n = re.subn(r"      # @SOURCE@.*?\n      - type: dir\n(?:        .*\n|          .*\n)*", git, m)
+          assert n == 1, "dir source not found"
+          open("out/dev.nullgrid.file.yml", "w").write(m)
+          PY
+          cp art/flatpak-sources/cargo-sources.json out/cargo-sources.json
+          cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ needs.version.outputs.ref }}
+          append_body: true
+          name: Null File ${{ needs.version.outputs.version }}
+          files: out/*
+          body: |
+            **Linux**, for x86_64 and ARM64 (aarch64). Pick your machine's architecture; any distro from 2022 on (glibc 2.35+):
+            - **Ubuntu 22.04+ / Debian 12+ / Mint / Null OS:** `sudo apt install ./null-file_${{ needs.version.outputs.version }}_amd64.deb` (ARM: `_arm64.deb`)
+            - **Fedora / openSUSE:** `sudo dnf install ./null-file-${{ needs.version.outputs.version }}-1.x86_64.rpm` (openSUSE: `sudo zypper install ./…rpm`; ARM: `.aarch64.rpm`)
+            - **Arch:** the AUR package `null-file-bin` (its `PKGBUILD` is attached here too)
+            - **Any distro, no install:** the `.AppImage`. `chmod +x` it and run it.
+            - **Flatpak** (also the way for RHEL, Rocky and Alma): `flatpak install ./null-file-${{ needs.version.outputs.version }}-x86_64.flatpak` (needs the Flathub remote)
+            - **Snap:** `sudo snap install --dangerous ./null-file_${{ needs.version.outputs.version }}_amd64.snap` (home folder and USB drives only)
+            - **Anything else:** the `.tar.gz`. Unpack it and run `./null-file`, or `./install.sh` to add it to your app menu.
+
+            Make it the file manager that opens folders: `null-file --set-default`, or Settings → Default file manager.
+
+            Check a download: `sha256sum -c SHA256SUMS --ignore-missing`
+
+            For Flathub, `dev.nullgrid.file.yml` and `cargo-sources.json` are the submission files.

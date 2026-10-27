@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.nullgrid.file</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <update_contact>volosteele55@proton.me</update_contact>
+  <project_license>LicenseRef-proprietary</project_license>
+  <name>Null File</name>
+  <summary>A fast file manager with tabs, undo and a graph of your folders</summary>
+  <developer id="dev.nullgrid">
+    <name>NULLGRID</name>
+  </developer>
+  <description>
+    <p>
+      Null File is a keyboard-friendly file manager for Linux in the Neon Lab look of
+      Null Grid, alongside Null Search, Null Notes and Null Drive.
+    </p>
+    <ul>
+      <li>Tabs, breadcrumbs you can click or type into, and a sidebar with places, pinned folders, drives and Trash</li>
+      <li>Grid and list views with image thumbnails, and a details panel that previews images, video, audio and text</li>
+      <li>Copy and move with live progress and cancel, drag and drop, and a prompt when names clash</li>
+      <li>Undo for rename, move, copy, new folder and Move to Trash</li>
+      <li>A Ctrl+K command palette, type-ahead, and search through every subfolder</li>
+      <li>A graph view that draws a folder tree as a force-directed map, colored by file type</li>
+      <li>Open a terminal in any folder, and set Null File as the default file manager in one click</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">dev.nullgrid.file.desktop</launchable>
+  <provides>
+    <binary>null-file</binary>
+    <mediatype>inode/directory</mediatype>
+  </provides>
+  <url type="homepage">https://nullgrid.dev</url>
+  <url type="bugtracker">https://github.com/Null0Grid/null-file/issues</url>
+  <url type="vcs-browser">https://github.com/Null0Grid/null-file</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Grid view with thumbnails and the details panel</caption>
+      <image>https://raw.githubusercontent.com/Null0Grid/null-file/main/docs/screenshots/grid.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The graph view of a folder tree</caption>
+      <image>https://raw.githubusercontent.com/Null0Grid/null-file/main/docs/screenshots/graph.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>List view</caption>
+      <image>https://raw.githubusercontent.com/Null0Grid/null-file/main/docs/screenshots/list.png</image>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>System</category>
+    <category>FileManager</category>
+    <category>Utility</category>
+  </categories>
+  <keywords>
+    <keyword>files</keyword>
+    <keyword>folders</keyword>
+    <keyword>file manager</keyword>
+    <keyword>explorer</keyword>
+  </keywords>
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </recommends>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <branding>
+    <color type="primary" scheme_preference="light">#9ff3ff</color>
+    <color type="primary" scheme_preference="dark">#0a0a0f</color>
+  </branding>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.0.0" date="2026-10-27">
+      <description>
+        <p>First release: tabs, grid and list views, undo, the command palette, and the graph view.</p>
+      </description>
+    </release>
+  </releases>
+</component>

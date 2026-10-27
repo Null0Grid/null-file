@@ -1,0 +1,75 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Null File",
+  "mainBinaryName": "null-file",
+  "version": "1.0.0",
+  "identifier": "dev.nullgrid.file",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Null File",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 480,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": ["**", "/**/.*", "/**/.*/**"],
+          "requireLiteralLeadingDot": false
+        }
+      },
+      "csp": {
+        "default-src": "'self'",
+        "connect-src": "ipc: http://ipc.localhost",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob: asset: http://asset.localhost",
+        "media-src": "'self' asset: http://asset.localhost",
+        "font-src": "'self'",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm", "appimage"],
+    "publisher": "NULLGRID",
+    "copyright": "NULLGRID. All rights reserved.",
+    "shortDescription": "Null File - a Neon Lab file manager",
+    "longDescription": "A fast, keyboard-friendly file manager for Linux with tabs, a command palette and a graph view of your folders.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
+    "category": "Utility",
+    "homepage": "https://nullgrid.dev",
+    "linux": {
+      "deb": {
+        "depends": ["xdg-utils"],
+        "desktopTemplate": "../packaging/linux/desktop-template.desktop"
+      },
+      "rpm": {
+        "release": "1",
+        "depends": ["xdg-utils"],
+        "desktopTemplate": "../packaging/linux/desktop-template.desktop"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  }
+}

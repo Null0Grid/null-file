@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Null File</title>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/d3-dispatch.min.js"></script>
+<script src="vendor/d3-quadtree.min.js"></script>
+<script src="vendor/d3-timer.min.js"></script>
+<script src="vendor/d3-force.min.js"></script>
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="top">
+    <div class="logo" title="Null File">
+      <svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><path class="mk-f" d="M18 30Q18 25 23 25H40Q43 25 45 27L49 32H77Q82 32 82 37V73Q82 78 77 78H23Q18 78 18 73Z"/><g class="mk-sl"><polygon points="37,45 43.5,45 38.6,67 32.1,67"/><polygon points="49.5,45 56,45 51.1,67 44.6,67"/></g><g class="mk-g"><circle cx="64" cy="50" r="2.6"/><circle cx="70" cy="57.5" r="2.6"/><circle cx="64" cy="65" r="2.6"/><path d="M64 50L70 57.5L64 65"/></g></svg>
+      <span>NULL <b>FILE</b></span>
+    </div>
+    <div class="nav">
+      <button class="iconbtn" id="back" title="Back (Alt+Left)" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <button class="iconbtn" id="fwd" title="Forward (Alt+Right)" aria-label="Forward"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+      <button class="iconbtn" id="up" title="Up a folder (Alt+Up)" aria-label="Up"><svg viewBox="0 0 24 24"><path d="M5 15l7-7 7 7"/></svg></button>
+    </div>
+    <div class="crumbs" id="crumbs" title="Click empty space or press Ctrl+L to type a path">
+      <div class="crumbtrail" id="crumbtrail"></div>
+      <input id="pathInput" class="pathinput" spellcheck="false" autocomplete="off" hidden aria-label="Folder path">
+    </div>
+    <div class="search">
+      <input id="q" type="search" placeholder="Filter · Ctrl+F" autocomplete="off" spellcheck="false" aria-label="Filter or search">
+      <button class="deep" id="deep" title="Search inside every subfolder (Enter)">ALL</button>
+    </div>
+    <div class="seg" role="group" aria-label="View">
+      <button id="vGrid" aria-pressed="true" title="Grid (Ctrl+1)">Grid</button>
+      <button id="vList" aria-pressed="false" title="List (Ctrl+2)">List</button>
+      <button id="vGraph" aria-pressed="false" title="Graph (Ctrl+3)">Graph</button>
+    </div>
+    <button class="iconbtn" id="menuBtn" title="Menu" aria-label="Menu"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+  </header>
+
+  <nav class="tabs" id="tabs" aria-label="Tabs"></nav>
+
+  <div class="main" id="main">
+    <aside class="side" id="side">
+      <div class="label">Places</div>
+      <ul class="places" id="places"></ul>
+      <div class="label pinlabel">Pinned <span class="hint">drag folders here</span></div>
+      <ul class="places" id="pinned"></ul>
+      <div class="label" id="drivesLabel" hidden>Drives</div>
+      <ul class="places" id="drives"></ul>
+      <ul class="places trashrow" id="trashPlace"></ul>
+    </aside>
+    <div class="resizer" id="resizer" aria-hidden="true"></div>
+
+    <section class="center" id="center" tabindex="-1">
+      <div class="sortbar" id="sortbar">
+        <button data-sort="name">Name</button><button data-sort="size">Size</button><button data-sort="modified">Modified</button><button data-sort="kind">Type</button>
+      </div>
+      <div class="files" id="files" tabindex="0" aria-label="Files"></div>
+      <div class="graphhost" id="graphhost" hidden>
+        <canvas id="graphCanvas"></canvas>
+        <div class="gbar" id="gbar">
+          <label class="gsl">Depth <input type="range" id="gDepth" min="1" max="8" step="1"><output id="gDepthO"></output></label>
+          <label class="gchk"><input type="checkbox" id="gFiles"> Files</label>
+          <label class="gchk"><input type="checkbox" id="gLabels"> Labels</label>
+          <label class="gchk"><input type="checkbox" id="gGlow"> Glow</label>
+          <button class="btn sm" id="gFit">Fit</button>
+          <span class="gstat" id="gStat"></span>
+        </div>
+        <div class="glegend" id="glegend"></div>
+        <div class="ghelp">Click to select · Double-click to open · Drag to move · Scroll to zoom</div>
+      </div>
+      <div class="emptymsg" id="emptymsg" hidden></div>
+    </section>
+
+    <aside class="info" id="info"></aside>
+  </div>
+
+  <footer class="status" id="status">
+    <span id="stCount"></span><span id="stSel"></span><span class="r" id="stRight"></span>
+  </footer>
+</div>
+
+<div class="jobs" id="jobs" hidden></div>
+<div class="ctx" id="ctx" hidden role="menu"></div>
+<div class="modal" id="modal" hidden></div>
+<div class="palette" id="palette" hidden>
+  <div class="pbox">
+    <input id="pq" spellcheck="false" autocomplete="off" placeholder="Type a command or folder…" aria-label="Command palette">
+    <div class="plist" id="plist"></div>
+    <div class="pfoot">↑↓ move · Enter run · Esc close · start with / or ~ to jump to a path</div>
+  </div>
+</div>
+<div class="drop" id="drop" hidden><div>DROP TO COPY HERE<small id="dropTo"></small></div></div>
+<div class="toast" id="toast" hidden></div>
+</body>
+</html>

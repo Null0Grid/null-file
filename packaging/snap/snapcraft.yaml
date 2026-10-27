@@ -1,0 +1,83 @@
+# Snap for Null File, made from the .deb that packaging/linux/build-linux.sh
+# builds (Ubuntu 22.04, same as core22). Build it on the same architecture:
+#
+#   packaging/linux/build-linux.sh deb
+#   cd packaging/snap && snapcraft --destructive-mode      # on Ubuntu 22.04
+#
+# Output: null-file_<version>_<amd64|arm64>.snap
+# Test it: sudo snap install --dangerous ./null-file_*.snap
+name: null-file
+title: Null File
+base: core22
+adopt-info: null-file
+summary: A fast file manager with tabs, undo and a graph of your folders.
+description: |
+  Null File is a keyboard-friendly file manager in the Neon Lab look of
+  Null Grid, alongside Null Search, Null Notes and Null Drive.
+
+  - Tabs, breadcrumbs, places, pinned folders, drives and Trash
+  - Grid and list views with thumbnails, and a details panel with previews
+  - Copy and move with progress, drag and drop, and undo
+  - A Ctrl+K command palette and search through every subfolder
+  - A graph view that draws a folder tree as a force-directed map
+
+  The snap can browse your home folder (not hidden folders) and, after
+  snap connect null-file:removable-media, USB drives. For the whole
+  file system, use the .deb, .rpm, AppImage or Flatpak instead.
+grade: stable
+confinement: strict
+license: Proprietary
+website: https://nullgrid.dev
+source-code: https://github.com/Null0Grid/null-file
+issues: https://github.com/Null0Grid/null-file/issues
+
+architectures:
+  - build-on: [amd64]
+    build-for: [amd64]
+  - build-on: [arm64]
+    build-for: [arm64]
+
+# WebKitGTK starts its helper processes from a fixed path
+layout:
+  /usr/lib/$SNAPCRAFT_ARCH_TRIPLET/webkit2gtk-4.1:
+    bind: $SNAP/usr/lib/$SNAPCRAFT_ARCH_TRIPLET/webkit2gtk-4.1
+
+apps:
+  null-file:
+    command: usr/bin/null-file
+    desktop: usr/share/applications/dev.nullgrid.file.desktop
+    common-id: dev.nullgrid.file
+    extensions: [gnome]
+    plugs:
+      - home
+      - removable-media
+      - mount-observe
+
+parts:
+  null-file:
+    plugin: nil
+    source: ../linux/dist
+    stage-packages:
+      - libwebkit2gtk-4.1-0
+    # Graphics drivers come from the gnome-42-2204 runtime snap. A second copy
+    # from stage-packages makes EGL load mismatched Mesa parts and crash.
+    prime:
+      - -usr/lib/*/libEGL*
+      - -usr/lib/*/libGL*
+      - -usr/lib/*/libGLX*
+      - -usr/lib/*/libGLdispatch*
+      - -usr/lib/*/libgbm*
+      - -usr/lib/*/libglapi*
+      - -usr/lib/*/libdrm*
+      - -usr/lib/*/dri
+      - -usr/lib/*/libvulkan*
+      - -usr/share/glvnd
+      - -usr/share/vulkan
+      - -usr/share/drirc.d
+    override-build: |
+      set -eu
+      deb="$(ls "$SNAPCRAFT_PART_SRC"/null-file_*_"$(dpkg --print-architecture)".deb | head -1)"
+      dpkg -x "$deb" "$SNAPCRAFT_PART_INSTALL"
+      craftctl set version="$(basename "$deb" | cut -d_ -f2)"
+      desktop="$SNAPCRAFT_PART_INSTALL/usr/share/applications/dev.nullgrid.file.desktop"
+      sed -i 's|^Icon=.*|Icon=${SNAP}/usr/share/icons/hicolor/512x512/apps/dev.nullgrid.file.png|' "$desktop"

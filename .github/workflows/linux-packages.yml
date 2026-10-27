@@ -1,0 +1,253 @@
+name: Linux packages
+
+# Every Linux package, for x86_64 and ARM64, each installed and tested on the
+# distros it's for. The release workflow calls this; pushes that touch
+# packaging run it on their own as a test (artifacts only, no release).
+#
+#   linux-x86_64 / linux-aarch64   AppImage, .deb, .rpm, .tar.gz, .snap
+#   flatpak-x86_64 / -aarch64       .flatpak bundle
+#   flatpak-sources                 cargo-sources.json for Flathub
+#   aur                             PKGBUILD + .SRCINFO (null-file-bin)
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "packaging/**"
+      - ".github/workflows/linux-packages.yml"
+
+env:
+  REF: ${{ inputs.ref || github.sha }}
+
+jobs:
+  native:
+    name: AppImage, deb, rpm, tar.gz, snap (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-22.04 }
+          - { arch: aarch64, runner: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.runner }}   # 22.04 = glibc 2.35, the oldest distro supported
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev build-essential \
+            librsvg2-dev patchelf file rpm xvfb
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+      - name: Build AppImage, .rpm, .tar.gz, .deb
+        run: packaging/linux/build-linux.sh
+      - name: Build .snap
+        timeout-minutes: 20   # the Snap Store sometimes stalls; fail instead of hanging
+        run: |
+          sudo snap install snapcraft --classic
+          cd packaging/snap
+          sudo snapcraft --destructive-mode --verbosity=brief
+          mv null-file_*.snap ../linux/dist/
+      - name: Check the packages
+        run: |
+          cd packaging/linux/dist
+          ls -la
+          v=$(python3 -c "import json;print(json.load(open('../../../src-tauri/tauri.conf.json'))['version'])")
+          d=$([ "${{ matrix.arch }}" = x86_64 ] && echo amd64 || echo arm64)
+          for f in "Null-File-$v-${{ matrix.arch }}.AppImage" "null-file-$v-1.${{ matrix.arch }}.rpm" \
+                   "null-file-$v-linux-${{ matrix.arch }}.tar.gz" "null-file_${v}_$d.deb" "null-file_${v}_$d.snap"; do
+            test -s "$f" || { echo "::error::missing $f"; exit 1; }
+          done
+          rpm -qp --qf '%{ARCH}\n' "null-file-$v-1.${{ matrix.arch }}.rpm" | grep -qx "${{ matrix.arch }}"
+          dpkg-deb -f "null-file_${v}_$d.deb" Architecture | grep -qx "$d"
+          file -L "Null-File-$v-${{ matrix.arch }}.AppImage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: packaging/linux/dist/*
+      - name: Launch the AppImage
+        run: |
+          cd packaging/linux/dist
+          set +e
+          APPIMAGE_EXTRACT_AND_RUN=1 timeout 20 xvfb-run -a ./Null-File-*.AppImage > ai.log 2>&1
+          rc=$?
+          [ $rc = 124 ] || { echo "::error::AppImage exited with $rc: $(tail -c 1500 ai.log | sed ':a;N;$!ba;s/\n/%0A/g')"; exit 1; }
+      - name: Install and launch the snap
+        timeout-minutes: 15
+        run: |
+          # a snap installed from a file doesn't pull in what it needs by itself
+          sudo snap install core22 gtk-common-themes gnome-42-2204
+          sudo snap install --dangerous packaging/linux/dist/null-file_*.snap
+          for p in gnome-42-2204 gtk-3-themes icon-themes sound-themes; do
+            sudo snap connect "null-file:$p" 2>/dev/null || true
+          done
+          snap connections null-file
+          set +e
+          timeout 30 xvfb-run -a snap run null-file > snap.log 2>&1
+          rc=$?
+          if [ $rc != 124 ]; then
+            echo "::error::snap exited with $rc (should still be running): $(tail -c 1500 snap.log | sed ':a;N;$!ba;s/\n/%0A/g')"
+            sudo journalctl --no-pager -n 40 | grep -iE "apparmor|denied|snap" | tail -20
+            exit 1
+          fi
+
+  distros:
+    name: Install on ${{ matrix.image }} (${{ matrix.arch }})
+    needs: native
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04, image: "ubuntu:22.04", kind: deb }
+          - { arch: x86_64, runner: ubuntu-24.04, image: "debian:12", kind: deb }
+          - { arch: x86_64, runner: ubuntu-24.04, image: "fedora:latest", kind: rpm }
+          - { arch: x86_64, runner: ubuntu-24.04, image: "opensuse/tumbleweed", kind: zypper }
+          # Not RHEL/Rocky/Alma 9 or 10: they don't ship WebKitGTK 4.1 (not even in EPEL). Flatpak covers them.
+          - { arch: aarch64, runner: ubuntu-24.04-arm, image: "ubuntu:22.04", kind: deb }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, image: "debian:12", kind: deb }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, image: "fedora:latest", kind: rpm }
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist
+      - name: Install
+        run: |
+          case "${{ matrix.kind }}" in
+            deb) apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ./dist/*.deb ;;
+            rpm) dnf install -y ./dist/*.rpm tar gzip ;;
+            zypper) zypper --non-interactive install --allow-unsigned-rpm ./dist/*.rpm tar gzip ;;
+          esac
+      - name: All libraries found
+        run: |
+          ldd /usr/bin/null-file > ldd.txt
+          missing=$(grep "not found" ldd.txt || true)
+          [ -z "$missing" ] || { echo "::error::libraries not found: $missing"; exit 1; }
+          entry=$(grep -l "^Exec=null-file" /usr/share/applications/*.desktop || true)
+          [ -n "$entry" ] || { echo "::error::no Null File desktop entry"; exit 1; }
+          grep -q "inode/directory" "$entry" || { echo "::error::$entry doesn't open folders (inode/directory)"; exit 1; }
+          echo "desktop entry: $entry"
+      - name: tar.gz runs here too
+        run: |
+          mkdir t && tar -xzf dist/*.tar.gz -C t
+          ldd t/*/null-file > ldd-tar.txt
+          missing=$(grep "not found" ldd-tar.txt || true)
+          [ -z "$missing" ] || { echo "::error::tar.gz: libraries not found: $missing"; exit 1; }
+
+  flatpak-sources:
+    name: Flatpak crate list
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - run: packaging/flatpak/cargo-sources.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-sources
+          path: packaging/flatpak/cargo-sources.json
+
+  flatpak:
+    name: Flatpak (${{ matrix.arch }})
+    needs: flatpak-sources
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak-sources
+          path: packaging/flatpak
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: packaging/flatpak/dev.nullgrid.file.yml
+          bundle: null-file-${{ matrix.arch }}.flatpak
+          arch: ${{ matrix.arch }}
+          cache-key: flatpak-builder-${{ matrix.arch }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          upload-artifact: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-${{ matrix.arch }}
+          path: null-file-${{ matrix.arch }}.flatpak
+
+  flatpak-test:
+    name: Install and launch the Flatpak (${{ matrix.arch }})
+    needs: flatpak
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak-${{ matrix.arch }}
+      - run: |
+          sudo apt-get update && sudo apt-get install -y flatpak xvfb
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive ./null-file-${{ matrix.arch }}.flatpak
+          flatpak info --user dev.nullgrid.file
+          set +e
+          timeout 30 xvfb-run -a flatpak run --user dev.nullgrid.file
+          rc=$?
+          [ $rc = 124 ] || { echo "::error::Flatpak exited with $rc (should still be running)"; exit 1; }
+
+  aur:
+    name: AUR package (built and installed on Arch)
+    needs: native
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          merge-multiple: true
+          path: dist
+      - name: Write PKGBUILD and .SRCINFO, build and install
+        run: |
+          pacman -Syu --noconfirm --needed base-devel python sudo
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          chown -R builder .
+          sudo -u builder packaging/aur/make-aur.sh dist aur
+          cat aur/PKGBUILD aur/.SRCINFO
+          cp dist/null-file-*-linux-x86_64.tar.gz aur/
+          cd aur
+          sudo -u builder makepkg -s --noconfirm
+          pacman -U --noconfirm null-file-bin-*.pkg.tar.zst
+          ! ldd /usr/bin/null-file | grep "not found"
+          pacman -Ql null-file-bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aur
+          include-hidden-files: true
+          path: |
+            aur/PKGBUILD
+            aur/.SRCINFO

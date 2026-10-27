@@ -1,0 +1,17 @@
+src-tauri/target/
+src-tauri/gen/
+__pycache__/
+*.deb
+*.AppImage
+*.rpm
+packaging/deb/null-file_*/
+packaging/linux/dist/
+packaging/linux/stage/
+packaging/flatpak/cargo-sources.json
+packaging/flatpak/build-dir/
+.flatpak-builder/
+packaging/aur/out/
+packaging/snap/*.snap
+packaging/snap/parts/
+packaging/snap/stage/
+packaging/snap/prime/
