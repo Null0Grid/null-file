@@ -1,0 +1,103 @@
+name: Package repository
+
+# Builds the signed APT + RPM repository from a release's .deb and .rpm files
+# and publishes it to the gh-pages branch (GitHub Pages serves it at
+# https://null0grid.github.io/null-file/). The Release workflow runs this at
+# the end; run it by hand (Actions → Package repository → Run workflow) to
+# republish a release. Needs the REPO_SIGNING_KEY secret (docs/UPDATES.md).
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      ref:
+        type: string
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release to publish, e.g. 1.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Build, check and publish
+    runs-on: ubuntu-24.04
+    env:
+      REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Signing key
+        id: key
+        run: |
+          if [ -z "$REPO_SIGNING_KEY" ]; then
+            echo "::warning::No REPO_SIGNING_KEY secret, so the package repository wasn't updated. See docs/UPDATES.md."
+            echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          printf '%s\n' "$REPO_SIGNING_KEY" | gpg --batch --import
+          fpr=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')
+          # the key in the secret must be the one the packages trust
+          gpg --show-keys --with-colons packaging/repo/null-grid.asc | grep -q "^fpr:::::::::$fpr:" \
+            || { echo "::error::REPO_SIGNING_KEY doesn't match packaging/repo/null-grid.asc"; exit 1; }
+          echo "REPO_KEY_ID=$fpr" >> "$GITHUB_ENV"
+      - name: Download the release's packages
+        if: steps.key.outputs.skip != '1'
+        run: |
+          mkdir dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist --pattern '*.deb' --pattern '*.rpm'
+          ls -la dist
+      - name: Build the signed repository
+        if: steps.key.outputs.skip != '1'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-utils createrepo-c rpm
+          packaging/repo/publish-repo.sh dist site
+          find site -maxdepth 4 | sort
+      - name: Check it with apt
+        if: steps.key.outputs.skip != '1'
+        run: |
+          set -o pipefail
+          (cd site && python3 -m http.server 8080 >/dev/null 2>&1 &) && sleep 2
+          # the keyring goes where the .deb puts it (apt's sandbox user can't read the workspace)
+          sudo install -m644 packaging/repo/null-grid-archive-keyring.gpg /usr/share/keyrings/null-grid-archive-keyring.gpg
+          sed 's#https://null0grid.github.io/null-file/apt#http://127.0.0.1:8080/apt#' packaging/repo/null-file.sources > /tmp/test.sources
+          if ! sudo apt-get update -o Dir::Etc::sourcelist=/tmp/test.sources -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 > /tmp/apt.log 2>&1; then
+            echo "::error::apt update failed: $(tail -c 1500 /tmp/apt.log | sed ':a;N;$!ba;s/\n/%0A/g')"; exit 1
+          fi
+          apt-cache policy null-file | tee /tmp/policy
+          grep -q "${TAG#v}" /tmp/policy || { echo "::error::apt doesn't see null-file ${TAG#v}: $(sed ':a;N;$!ba;s/\n/%0A/g' /tmp/policy)"; exit 1; }
+      - name: Check it with dnf
+        if: steps.key.outputs.skip != '1'
+        continue-on-error: true   # apt is the required check; this one reports problems without blocking
+        run: |
+          docker run --rm --network host -v "$PWD/packaging/repo:/k:ro" fedora:latest bash -c '
+            set -e
+            cp /k/null-grid.asc /etc/pki/rpm-gpg/RPM-GPG-KEY-null-grid
+            rpm --import /k/null-grid.asc
+            sed "s#https://null0grid.github.io/null-file#http://127.0.0.1:8080#" /k/null-file.repo > /etc/yum.repos.d/null-file.repo
+            dnf -q -y makecache --repo null-file
+            dnf -q --repo null-file list --available null-file
+            dnf -q -y --repo null-file --setopt=install_weak_deps=False download null-file
+            rpm -K null-file-*.rpm' > /tmp/dnf.log 2>&1 \
+            || { echo "::error::dnf check failed: $(tail -c 1500 /tmp/dnf.log | sed ':a;N;$!ba;s/\n/%0A/g')"; exit 1; }
+          cat /tmp/dnf.log
+      - name: Publish to the gh-pages branch
+        if: steps.key.outputs.skip != '1'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ github.token }}
+          publish_dir: site
+          publish_branch: gh-pages
+          force_orphan: true
+          user_name: "github-actions[bot]"
+          user_email: "github-actions[bot]@users.noreply.github.com"
+          commit_message: "Package repository for ${{ inputs.tag }}"
