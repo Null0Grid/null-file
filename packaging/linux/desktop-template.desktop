@@ -9,4 +9,4 @@ Terminal=false
 Categories=System;FileTools;FileManager;
 Keywords=files;folders;file manager;explorer;directory;nullgrid;
 MimeType=inode/directory;
-StartupWMClass=null-file
+StartupWMClass=dev.nullgrid.file

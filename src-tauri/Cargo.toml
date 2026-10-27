@@ -35,6 +35,10 @@ zbus = "5"
 # update checks
 ureq = { version = "2", features = ["json", "proxy-from-env", "native-certs"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# the window's Wayland app_id / WM_CLASS (dev.nullgrid.file), set in main.rs
+glib = "0.18"
+
 [dev-dependencies]
 tempfile = "3"
 

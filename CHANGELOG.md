@@ -5,7 +5,9 @@ The release workflow copies the section for each version into its GitHub release
 ## 1.2.0 — 2026-10-27
 
 - **"Show in folder" opens Null File.** Browsers' "Show in folder" after a download, and any app that asks the system to show a file in the file manager, now open Null File at that folder with the file selected. Null File answers the standard `org.freedesktop.FileManager1` request whenever it's your default file manager, and starts itself to answer it when it isn't running.
-- Already the default? Run `null-file --set-default` once more (or Settings → Default file manager) to switch this on for when Null File is closed.
+- The .deb sets this up for everyone: it installs `/usr/share/dbus-1/services/org.freedesktop.FileManager1.service` (unless another package, such as Nautilus, already owns that file). D-Bus then starts Null File in the background, and a window appears only when an app asks to show something. ShowItemProperties opens the folder with the item shown in the details panel.
+- Other copies (AppImage, tar.gz, rpm, Flatpak): run `null-file --set-default` once more (or Settings → Default file manager) to switch this on for when Null File is closed.
+- **The right icon in the title bar and taskbar on Wayland.** The window now identifies itself as `dev.nullgrid.file` (Wayland app_id and X11 WM_CLASS), matching its desktop entry, so KDE Plasma and GNOME show the Null File icon instead of a generic one.
 
 ## 1.1.0 — 2026-10-27
 

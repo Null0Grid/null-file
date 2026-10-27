@@ -1889,6 +1889,8 @@ async function start() {
   P = await api("places");
   await refreshVault();
   document.documentElement.style.setProperty("--side", S.sidebar_w + "px");
+  // Started by D-Bus in the background: wait for the "Show in folder" request that wants a window.
+  if (await api("background_start")) await api("wait_show");
   const pending = await api("take_pending");
   const startTabs = [];
   if (pending.length) {

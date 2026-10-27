@@ -162,12 +162,21 @@ fn xdg_mime(args: &[&str]) -> Command {
     }
 }
 
-pub fn default_status() -> DefaultStatus {
-    let current = xdg_mime(&["query", "default", "inode/directory"])
+fn mime_default() -> String {
+    xdg_mime(&["query", "default", "inode/directory"])
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// Folders open in Null File (whether or not the "Show in folder" service file is set up yet).
+pub fn is_mime_default() -> bool {
+    mime_default() == desktop_id()
+}
+
+pub fn default_status() -> DefaultStatus {
+    let current = mime_default();
     let id = desktop_id();
     // Also needs the "Show in folder" service file (added in 1.2.0), so older setups get the button again.
     let dbus_ok = crate::fm1::exec_line().is_none() || crate::fm1::service_file_installed();

@@ -32,6 +32,13 @@ install -m644 "$root/packaging/linux/dev.nullgrid.file.metainfo.xml" "$R/usr/sha
 install -Dm644 "$root/packaging/repo/null-file.sources" "$R/etc/apt/sources.list.d/null-file.sources"
 install -Dm644 "$root/packaging/repo/null-grid-archive-keyring.gpg" "$R/usr/share/keyrings/null-grid-archive-keyring.gpg"
 echo "/etc/apt/sources.list.d/null-file.sources" > "$R/DEBIAN/conffiles"
+# "Show in folder" (org.freedesktop.FileManager1): D-Bus starts Null File in the background.
+# postinst puts it in /usr/share/dbus-1/services/ unless another package (Nautilus) owns that file.
+install -Dm644 /dev/stdin "$R/usr/share/null-file/org.freedesktop.FileManager1.service" <<'EOT'
+[D-BUS Service]
+Name=org.freedesktop.FileManager1
+Exec=/usr/bin/null-file --dbus
+EOT
 
 cat > "$R/usr/share/doc/null-file/copyright" <<'EOT'
 Null File
@@ -39,14 +46,29 @@ Copyright NULLGRID. All rights reserved.
 EOT
 
 # Refresh the desktop and icon caches so "Open folder" and the menu see it right away.
-cat > "$R/DEBIAN/postinst" <<'EOT'
+svc=/usr/share/dbus-1/services/org.freedesktop.FileManager1.service
+cat > "$R/DEBIAN/postinst" <<EOT
 #!/bin/sh
 set -e
+# The FileManager1 activation file, unless another package (Nautilus) ships its own.
+if ! dpkg -S $svc >/dev/null 2>&1; then
+  mkdir -p /usr/share/dbus-1/services
+  cp /usr/share/null-file/org.freedesktop.FileManager1.service $svc
+fi
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
 exit 0
 EOT
-cp "$R/DEBIAN/postinst" "$R/DEBIAN/postrm"
+cat > "$R/DEBIAN/postrm" <<EOT
+#!/bin/sh
+set -e
+if [ "\$1" = remove ] || [ "\$1" = purge ]; then
+  grep -qx 'Exec=/usr/bin/null-file --dbus' $svc 2>/dev/null && ! dpkg -S $svc >/dev/null 2>&1 && rm -f $svc
+fi
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || true
+command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
+exit 0
+EOT
 chmod 755 "$R/DEBIAN/postinst" "$R/DEBIAN/postrm"
 
 size="$(du -sk "$R/usr" "$R/etc" | awk '{s+=$1} END {print s}')"

@@ -105,6 +105,10 @@ pub(crate) struct AppState {
     /// Set once the window listens for "show-paths"; requests before that wait here.
     pub(crate) ui_ready: AtomicBool,
     pub(crate) pending_shows: Mutex<Vec<fm1::Show>>,
+    /// Wakes `wait_show` when a request arrives.
+    pub(crate) shows_cv: std::sync::Condvar,
+    /// Started by D-Bus (`--dbus`): stay hidden until a request asks for a window.
+    background: AtomicBool,
 }
 
 /// Answer "show this file in the file manager" requests (in the background: D-Bus can be slow or missing).
@@ -688,6 +692,24 @@ fn save_settings(app: AppHandle, st: State<'_, AppState>, settings: Settings) ->
 
 /// The window is listening: hand over "show in folder" requests that arrived before it was.
 #[tauri::command]
+fn background_start(st: State<'_, AppState>) -> bool {
+    st.background.load(Ordering::SeqCst)
+}
+
+/// Started in the background: wait until a "Show in folder" request arrives.
+#[tauri::command]
+async fn wait_show(app: AppHandle) {
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<AppState>();
+        let mut q = st.pending_shows.lock().unwrap();
+        while q.is_empty() {
+            q = st.shows_cv.wait(q).unwrap();
+        }
+    })
+    .await;
+}
+
+#[tauri::command]
 fn ui_ready(st: State<'_, AppState>) -> Vec<fm1::Show> {
     let mut q = st.pending_shows.lock().unwrap();
     st.ui_ready.store(true, Ordering::SeqCst);
@@ -772,13 +794,20 @@ pub fn run() {
         }
         return;
     }
-    let activated = args.iter().any(|a| a == fm1::ACTIVATED_FLAG);
+    // D-Bus activation (org.freedesktop.FileManager1): start hidden, show a window only for a request.
+    let activated = args.iter().any(|a| fm1::is_dbus_flag(a));
     let cwd = std::env::current_dir().unwrap_or_else(|_| fsops::home());
     let state = AppState::default();
     *state.pending.lock().unwrap() = parse_args(&args, &cwd);
+    state.background.store(activated, Ordering::SeqCst);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            if argv.iter().any(|a| fm1::is_dbus_flag(a)) {
+                // D-Bus tried to start us for "Show in folder": answer from this window instead.
+                start_fm1(app.clone(), true);
+                return;
+            }
             let paths = parse_args(&argv.into_iter().skip(1).collect::<Vec<_>>(), Path::new(&cwd));
             let _ = app.emit("open-paths", paths);
             if let Some(w) = app.get_webview_window("main") {
@@ -792,11 +821,27 @@ pub fn run() {
             // Claim org.freedesktop.FileManager1 when we're the default file manager,
             // or when D-Bus started us to answer it.
             let h = app.handle().clone();
-            std::thread::spawn(move || {
-                if activated || sysint::default_status().is_default {
-                    start_fm1(h, true);
+            if activated {
+                start_fm1(h.clone(), true);
+                // Nobody asked for anything after all: don't linger invisibly.
+                let h2 = h.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(90));
+                    let visible = h2.get_webview_window("main").and_then(|w| w.is_visible().ok()).unwrap_or(false);
+                    if !visible && h2.state::<AppState>().pending_shows.lock().unwrap().is_empty() {
+                        h2.exit(0);
+                    }
+                });
+            } else {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
                 }
-            });
+                std::thread::spawn(move || {
+                    if sysint::is_mime_default() {
+                        start_fm1(h, true);
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -823,6 +868,8 @@ pub fn run() {
             open_terminal,
             open_url,
             default_status,
+            background_start,
+            wait_show,
             make_default,
             copy_to_clipboard,
             get_settings,

@@ -65,6 +65,7 @@ null-file ~/Downloads /mnt    # a tab for each folder
 null-file ~/notes/todo.md     # opens the folder with that file selected
 null-file --set-default       # make it the default file manager
 null-file --version
+null-file --dbus              # what D-Bus runs for "Show in folder": stays hidden until asked
 ```
 
 If Null File is already open, these open as new tabs in the existing window.

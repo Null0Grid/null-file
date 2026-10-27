@@ -28,6 +28,9 @@ Tabs (restored at startup), breadcrumbs + typed paths, sidebar (XDG places, pinn
 
 ## "Show in folder" (1.2.0)
 `src-tauri/src/fm1.rs` serves `org.freedesktop.FileManager1` (ShowItems / ShowFolders / ShowItemProperties) on the session bus when Null File is the default (or was started with `--dbus-activated`), replacing the current owner. `--set-default` also writes `~/.local/share/dbus-1/services/org.freedesktop.FileManager1.service` (user level beats Dolphin's/Nautilus's system files) so D-Bus starts Null File when it's closed. Flatpak has `--own-name`; Snap can't own the name.
+- D-Bus starts it as `null-file --dbus` (`--dbus-activated` also accepted): the window stays hidden until a method call, and the process exits after 90 s if none comes. If Null File is already running, the second process hands the request to it (single instance) and the running one claims the name.
+- The .deb ships `/usr/share/null-file/org.freedesktop.FileManager1.service` and its postinst copies it to `/usr/share/dbus-1/services/org.freedesktop.FileManager1.service` unless another package (Nautilus) owns that path; postrm removes it if it's ours. Not shipped directly in the package, because that would make the .deb impossible to install next to Nautilus.
+- Window identity: `main.rs` calls `glib::set_prgname("dev.nullgrid.file")` before GTK starts, so the Wayland app_id and X11 WM_CLASS are `dev.nullgrid.file`; desktop files have `StartupWMClass=dev.nullgrid.file`. The window starts hidden (`visible: false`) and `setup` shows it unless started with `--dbus`.
 
 ## Not done yet
 - Dragging files out of Null File into other apps (Tauri limitation); dragging in works.

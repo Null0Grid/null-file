@@ -12,7 +12,15 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub const NAME: &str = "org.freedesktop.FileManager1";
 pub const PATH: &str = "/org/freedesktop/FileManager1";
-pub const ACTIVATED_FLAG: &str = "--dbus-activated";
+/// What D-Bus starts us with. `--dbus-activated` is the older spelling, still accepted.
+pub const ACTIVATED_FLAG: &str = "--dbus";
+
+pub fn is_dbus_flag(a: &str) -> bool {
+    a == ACTIVATED_FLAG || a == "--dbus-activated"
+}
+
+/// Where the .deb puts the system-wide service file (see packaging/deb/build-deb.sh).
+pub const SYSTEM_SERVICE: &str = "/usr/share/dbus-1/services/org.freedesktop.FileManager1.service";
 
 /// What the window should do with a request.
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -60,6 +68,7 @@ impl Fm {
             let _ = self.app.emit("show-paths", show);
         } else {
             st.pending_shows.lock().unwrap().push(show);
+            st.shows_cv.notify_all();
         }
         if let Some(w) = self.app.get_webview_window("main") {
             let _ = w.unminimize();
@@ -140,10 +149,19 @@ fn user_services_dir() -> PathBuf {
     data.unwrap_or_else(|| fsops::home().join(".local/share")).join("dbus-1/services")
 }
 
+/// A service file (ours, user-level or the system one from the .deb) that starts this Null File.
 pub fn service_file_installed() -> bool {
-    std::fs::read_to_string(user_services_dir().join(format!("{NAME}.service")))
-        .map(|c| exec_line().map(|e| c.contains(&format!("Exec={e}"))).unwrap_or(false))
-        .unwrap_or(false)
+    let Some(e) = exec_line() else { return false };
+    let ours = |p: &Path| {
+        std::fs::read_to_string(p).map(|c| c.lines().any(|l| l.trim() == format!("Exec={e}"))).unwrap_or(false)
+    };
+    // A user-level file wins over the system one, so only fall back when there's none.
+    let user = user_services_dir().join(format!("{NAME}.service"));
+    if user.exists() {
+        ours(&user)
+    } else {
+        ours(Path::new(SYSTEM_SERVICE))
+    }
 }
 
 /// Write ~/.local/share/dbus-1/services/org.freedesktop.FileManager1.service.
@@ -180,7 +198,8 @@ mod tests {
 
     #[test]
     fn service_file_shape() {
-        let s = service_file_contents("/usr/bin/null-file --dbus-activated");
-        assert_eq!(s, "[D-BUS Service]\nName=org.freedesktop.FileManager1\nExec=/usr/bin/null-file --dbus-activated\n");
+        let s = service_file_contents("/usr/bin/null-file --dbus");
+        assert_eq!(s, "[D-BUS Service]\nName=org.freedesktop.FileManager1\nExec=/usr/bin/null-file --dbus\n");
+        assert!(is_dbus_flag("--dbus") && is_dbus_flag("--dbus-activated") && !is_dbus_flag("--debug"));
     }
 }
