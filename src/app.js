@@ -364,7 +364,7 @@ function renderFiles() {
   const center = $("center");
   center.className = "center " + (S.view === "list" ? "list" : "grid");
   files.classList.toggle("searching", !!t.search);
-  $("sortbar").hidden = !!t.search;
+  $("sortbar").hidden = !!t.search || S.view === "graph";
   document.querySelectorAll("#sortbar button").forEach((b) => { b.classList.toggle("on", b.dataset.sort === S.sort); b.classList.toggle("desc", S.desc); });
   const head = t.search
     ? `<div class="searchhead"><span>${t.search.running ? "Searching…" : `${t.search.hits.length}${t.search.truncated ? "+" : ""} match${t.search.hits.length === 1 ? "" : "es"} for “${esc(t.search.query)}” in ${esc(homeShort(t.path))}`}</span><button class="btn sm" id="endSearch">Close search</button></div>`
@@ -1141,6 +1141,7 @@ function setView(v) {
   const isG = v === "graph";
   $("graphhost").hidden = !isG;
   $("files").hidden = isG;
+  $("sortbar").hidden = isG || !!tab().search;
   if (isG) {
     $("emptymsg").hidden = true;
     const o = gopt();
