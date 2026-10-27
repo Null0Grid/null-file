@@ -73,7 +73,7 @@ jobs:
           if ! sudo apt-get update -o Dir::Etc::sourcelist=/tmp/test.sources -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 > /tmp/apt.log 2>&1; then
             echo "::error::apt update failed: $(tail -c 1500 /tmp/apt.log | sed ':a;N;$!ba;s/\n/%0A/g')"; exit 1
           fi
-          apt-cache policy null-file | tee /tmp/policy
+          apt-cache policy -o Dir::Etc::sourcelist=/tmp/test.sources -o Dir::Etc::sourceparts=- null-file | tee /tmp/policy
           grep -q "${TAG#v}" /tmp/policy || { echo "::error::apt doesn't see null-file ${TAG#v}: $(sed ':a;N;$!ba;s/\n/%0A/g' /tmp/policy)"; exit 1; }
       - name: Check it with dnf
         if: steps.key.outputs.skip != '1'
